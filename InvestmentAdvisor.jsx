@@ -614,3 +614,87 @@ function MobileFallback() {
   );
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// PANEL: [SYS.CFG] — Investor Profile config
+// ─────────────────────────────────────────────────────────────────────────────
+
+function SysCfgPanel({ profile, setProfile, autoRefresh, setAutoRefresh }) {
+  const inputStyle = {
+    background: T.bg, color: T.green, border: `1px solid ${T.greenDark}`,
+    fontFamily: T.font, fontSize: 12, padding: '3px 6px', width: '100%',
+    outline: 'none', caretColor: T.green,
+  };
+  const labelStyle = { color: T.greenMid, fontSize: 11, letterSpacing: '0.08em', display: 'block', marginBottom: 2 };
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <div>
+        <label style={labelStyle}>CAPITAL (USD)</label>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span style={{ color: T.greenMid, fontSize: 12 }}>$</span>
+          <input
+            data-no-drag type="number" min={0}
+            value={profile.capital}
+            onChange={e => setProfile(p => ({ ...p, capital: parseFloat(e.target.value) || 0 }))}
+            style={{ ...inputStyle, flex: 1 }}
+          />
+        </div>
+      </div>
+
+      <div>
+        <label style={labelStyle}>RISK PROFILE</label>
+        <select
+          data-no-drag
+          value={profile.risk_profile}
+          onChange={e => setProfile(p => ({ ...p, risk_profile: e.target.value }))}
+          style={{ ...inputStyle }}
+        >
+          <option value="conservative">CONSERVATIVE</option>
+          <option value="moderate">MODERATE</option>
+          <option value="aggressive">AGGRESSIVE</option>
+        </select>
+      </div>
+
+      <div>
+        <label style={labelStyle}>TIME HORIZON</label>
+        <select
+          data-no-drag
+          value={profile.time_horizon}
+          onChange={e => setProfile(p => ({ ...p, time_horizon: e.target.value }))}
+          style={{ ...inputStyle }}
+        >
+          <option value="short">SHORT (&lt;1 year)</option>
+          <option value="medium">MEDIUM (1–3 years)</option>
+          <option value="long">LONG (&gt;3 years)</option>
+        </select>
+      </div>
+
+      <div>
+        <label style={labelStyle}>SECTORS (comma-separated)</label>
+        <input
+          data-no-drag type="text"
+          value={profile.preferred_sectors.join(', ')}
+          onChange={e => setProfile(p => ({
+            ...p,
+            preferred_sectors: e.target.value.split(',').map(s => s.trim()).filter(Boolean),
+          }))}
+          placeholder="Technology, Finance..."
+          style={{ ...inputStyle }}
+        />
+      </div>
+
+      <div
+        onClick={() => setAutoRefresh(v => !v)}
+        style={{ cursor: 'pointer', borderTop: `1px solid ${T.greenDark}`, paddingTop: 10 }}
+      >
+        <label style={{ ...labelStyle, cursor: 'pointer' }}>AUTO-REFRESH (15 min)</label>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12 }}>
+          <span style={{ color: autoRefresh ? T.greenDark : T.green }}>[OFF]</span>
+          <span style={{ color: T.greenMid }}>{autoRefresh ? '●───' : '───●'}</span>
+          <span style={{ color: autoRefresh ? T.green : T.greenDark }}>[ON]</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
