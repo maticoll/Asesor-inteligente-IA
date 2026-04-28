@@ -13,6 +13,8 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   LineChart,
   Line,
+  AreaChart,
+  Area,
   XAxis,
   Tooltip,
   ResponsiveContainer,
@@ -798,6 +800,88 @@ function MktInPanel({ ticker, setTicker, isAnalyzing, onAnalyze, agentStates, ag
           </div>
         );
       })}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PANEL: [PRC.DAT] — Price chart + current price
+// ─────────────────────────────────────────────────────────────────────────────
+
+function PrcDatPanel({ tech, ticker }) {
+  const data = tech?.priceHistory || [];
+  const currentPrice = tech?.currentPrice;
+  const prices = data.map(d => d.price).filter(Boolean);
+  const change60 = prices.length > 1
+    ? ((prices[prices.length - 1] / prices[0] - 1) * 100)
+    : null;
+  const isUp = change60 == null || change60 >= 0;
+
+  if (!tech) {
+    return (
+      <div style={{ color: T.greenDark, fontSize: 11 }}>
+        <div>{row('TICKER', '---')}</div>
+        <div>{row('PRICE', '$---.--')}</div>
+        <div style={{ marginTop: 12, color: T.greenDark }}>
+          {'─'.repeat(40)}
+        </div>
+        <div style={{ marginTop: 8, color: T.greenDark, textAlign: 'center' }}>
+          AWAITING DATA
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      {/* Header row */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+        <span style={{ color: T.green, fontSize: 14, fontWeight: 'bold', letterSpacing: '0.1em' }}>
+          {ticker}
+        </span>
+        <div style={{ textAlign: 'right' }}>
+          <div style={{ color: T.green, fontSize: 18, fontWeight: 'bold', fontFamily: T.font }}>
+            ${currentPrice?.toFixed(2)}
+          </div>
+          {change60 != null && (
+            <div style={{ color: isUp ? T.green : T.red, fontSize: 11 }}>
+              {isUp ? '▲' : '▼'} {change60 >= 0 ? '+' : ''}{change60.toFixed(2)}% (60d)
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div style={{ borderTop: `1px solid ${T.greenDark}`, paddingTop: 4 }}>
+        <ResponsiveContainer width="100%" height={160}>
+          <AreaChart data={data} margin={{ top: 4, right: 4, left: -30, bottom: 0 }}>
+            <defs>
+              <linearGradient id="greenGradient" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor={T.green} stopOpacity={0.15} />
+                <stop offset="100%" stopColor={T.green} stopOpacity={0} />
+              </linearGradient>
+            </defs>
+            <XAxis
+              dataKey="date"
+              tick={{ fontSize: 9, fill: T.greenDark, fontFamily: T.font }}
+              interval={Math.floor(data.length / 5)}
+              tickLine={false}
+              axisLine={{ stroke: T.greenDark }}
+            />
+            <Tooltip
+              contentStyle={{ background: T.bgPanel, border: `1px solid ${T.greenDark}`, fontFamily: T.font, fontSize: 11 }}
+              labelStyle={{ color: T.greenMid }}
+              itemStyle={{ color: T.green }}
+            />
+            <Area
+              type="monotone" dataKey="price"
+              stroke={T.green} strokeWidth={1.5}
+              fill="url(#greenGradient)"
+              dot={false}
+              activeDot={{ r: 3, fill: T.green, strokeWidth: 0 }}
+            />
+          </AreaChart>
+        </ResponsiveContainer>
+      </div>
     </div>
   );
 }
