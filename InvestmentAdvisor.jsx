@@ -886,3 +886,76 @@ function PrcDatPanel({ tech, ticker }) {
   );
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// PANEL: [ANLYTCS] — Technical, Fundamental, Risk metrics
+// ─────────────────────────────────────────────────────────────────────────────
+
+function AnalyticsPanel({ tech, fund, risk }) {
+  const colStyle = {
+    flex: 1, display: 'flex', flexDirection: 'column', gap: 4,
+    borderRight: `1px solid ${T.greenDark}`, paddingRight: 12,
+  };
+  const headerStyle = {
+    color: T.greenMid, fontSize: 10, letterSpacing: '0.1em',
+    borderBottom: `1px solid ${T.greenDark}`, paddingBottom: 4, marginBottom: 6,
+  };
+  const metricStyle = { color: T.green, fontSize: 11, whiteSpace: 'pre' };
+  const dash = '---';
+
+  return (
+    <div style={{ display: 'flex', gap: 12, height: '100%' }}>
+      {/* Technical */}
+      <div style={colStyle}>
+        <div style={headerStyle}>── TECHNICAL ──</div>
+        {[
+          row('RSI(14)', tech ? tech.rsi : dash),
+          row('SMA 50', tech ? `$${tech.sma50}` : dash),
+          row('SMA 200', tech ? `$${tech.sma200}` : dash),
+          row('MACD', tech ? tech.macd : dash),
+          row('TREND', tech ? (tech.sma50 > tech.sma200 ? '▲ BULL' : '▼ BEAR') : dash),
+        ].map((line, i) => (
+          <div key={i} style={metricStyle}>{line}</div>
+        ))}
+      </div>
+
+      {/* Fundamental */}
+      <div style={colStyle}>
+        <div style={headerStyle}>── FUNDAMENTAL ──</div>
+        {[
+          row('P/E RATIO', fund ? fund.pe : dash),
+          row('ROE', fund ? `${fund.roe}%` : dash),
+          row('PEG RATIO', fund ? fund.peg : dash),
+          row('QUALITY', fund ? `${fund.quality_score}/100` : dash),
+          row('VALUATION', fund ? fund.valuation.toUpperCase() : dash),
+        ].map((line, i) => (
+          <div key={i} style={metricStyle}>{line}</div>
+        ))}
+      </div>
+
+      {/* Risk */}
+      <div style={{ ...colStyle, borderRight: 'none', paddingRight: 0 }}>
+        <div style={headerStyle}>── RISK ──</div>
+        {[
+          row('LEVEL', risk ? risk.risk_level.toUpperCase() : dash),
+          row('VOL 30D', risk ? `${risk.volatility_30d}%` : dash),
+          row('VAR(95%)', risk ? `$${risk.var_95}` : dash),
+          row('BETA', risk ? risk.beta : dash),
+          row('MAX WT', risk ? `${risk.max_weight}%` : dash),
+        ].map((line, i) => (
+          <div
+            key={i}
+            style={{
+              ...metricStyle,
+              color: i === 0 && risk
+                ? (risk.risk_level === 'low' ? T.green : risk.risk_level === 'high' ? T.red : T.yellow)
+                : T.green,
+            }}
+          >
+            {line}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
