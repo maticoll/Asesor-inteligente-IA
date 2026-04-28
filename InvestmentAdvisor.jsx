@@ -698,3 +698,107 @@ function SysCfgPanel({ profile, setProfile, autoRefresh, setAutoRefresh }) {
   );
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// PANEL: [MKT.IN] — Ticker input + 4 agent status cards
+// ─────────────────────────────────────────────────────────────────────────────
+
+function MktInPanel({ ticker, setTicker, isAnalyzing, onAnalyze, agentStates, agentResults, errors }) {
+  const dots = useDots(isAnalyzing);
+  const agents = [
+    { key: 'technical',    label: 'AGENT 01 · TECHNICAL   ' },
+    { key: 'fundamental',  label: 'AGENT 02 · FUNDAMENTAL ' },
+    { key: 'risk',         label: 'AGENT 03 · RISK MGT    ' },
+    { key: 'orchestrator', label: 'AGENT 04 · ORCHESTRATOR' },
+  ];
+
+  const signalColor = (s) => s === 'buy' ? T.green : s === 'sell' ? T.red : T.yellow;
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      {/* Ticker input row */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <span style={{ color: T.greenMid, fontSize: 14 }}>{'>'}</span>
+        <input
+          data-no-drag
+          type="text"
+          value={ticker}
+          onChange={e => setTicker(e.target.value.toUpperCase())}
+          onKeyDown={e => e.key === 'Enter' && !isAnalyzing && onAnalyze()}
+          maxLength={10}
+          placeholder="TICKER"
+          style={{
+            flex: 1, background: T.bg, color: T.green,
+            border: `1px solid ${T.greenDark}`, fontFamily: T.font,
+            fontSize: 14, padding: '4px 8px', outline: 'none',
+            caretColor: T.green, letterSpacing: '0.12em',
+          }}
+        />
+        <button
+          data-no-drag
+          onClick={onAnalyze}
+          disabled={isAnalyzing || !ticker.trim()}
+          style={{
+            background: isAnalyzing ? T.bgPanel : T.bg,
+            color: isAnalyzing ? T.greenDark : T.green,
+            border: `1px solid ${isAnalyzing ? T.greenDark : T.green}`,
+            fontFamily: T.font, fontSize: 12, padding: '4px 10px',
+            cursor: isAnalyzing ? 'not-allowed' : 'pointer',
+            letterSpacing: '0.06em',
+          }}
+        >
+          {isAnalyzing ? `ANLZ${dots}` : 'ANALYZE ▶'}
+        </button>
+      </div>
+
+      {/* Divider */}
+      <div style={{ borderTop: `1px solid ${T.greenDark}` }} />
+
+      {/* Agent status rows */}
+      {agents.map(({ key, label }) => {
+        const st = agentStates[key] || 'idle';
+        const badge = BADGE[st] || BADGE.idle;
+        const pct = STAGE_PCT[st] || 0;
+        const result = agentResults[key];
+        const signal = result?.signal || result?.final_action;
+        const confidence = result?.confidence ?? result?.confidence_score;
+        const isErr = st === 'error';
+
+        return (
+          <div key={key} style={{ fontFamily: T.font, fontSize: 11 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 3 }}>
+              <span style={{ color: T.greenMid, minWidth: 200 }}>{label}</span>
+              <span
+                style={{ color: badge.color, minWidth: 52 }}
+                className={badge.pulse ? 'animate-pulse' : ''}
+              >
+                {badge.text}
+              </span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ color: isErr ? T.red : T.greenMid, letterSpacing: 2 }}>
+                {bar(pct)}
+              </span>
+              {signal && (
+                <span style={{ color: signalColor(signal), fontSize: 10, fontWeight: 'bold' }}>
+                  {signal.toUpperCase()}
+                </span>
+              )}
+              {confidence != null && (
+                <span style={{ color: T.greenMid, fontSize: 10 }}>{confidence}%</span>
+              )}
+              {result?.risk_level && !signal && (
+                <span style={{ color: T.yellow, fontSize: 10 }}>{result.risk_level.toUpperCase()}</span>
+              )}
+            </div>
+            {errors[key] && (
+              <div style={{ color: T.red, fontSize: 10, marginTop: 2 }}>
+                ⚠ {errors[key].slice(0, 60)}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
