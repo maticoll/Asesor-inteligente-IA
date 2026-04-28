@@ -11,8 +11,6 @@
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
-  LineChart,
-  Line,
   AreaChart,
   Area,
   XAxis,
