@@ -1106,3 +1106,191 @@ function SigOutPanel({ orch, tech, fund, risk, profile, errors }) {
   );
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// MAIN COMPONENT — InvestmentAdvisor v2.0
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export default function InvestmentAdvisor() {
+  // ── Investor profile ───────────────────────────────────────────────────────
+  const [profile, setProfile] = React.useState({
+    capital: 50000, risk_profile: 'moderate',
+    time_horizon: 'medium', preferred_sectors: [],
+  });
+
+  // ── Ticker + analysis state ────────────────────────────────────────────────
+  const [ticker, setTicker] = React.useState('AAPL');
+  const [isAnalyzing, setAnalyzing] = React.useState(false);
+  const [autoRefresh, setAutoRefresh] = React.useState(false);
+
+  const [agentStates, setAgentStates] = React.useState({
+    technical: 'idle', fundamental: 'idle', risk: 'idle', orchestrator: 'idle',
+  });
+  const [agentResults, setAgentResults] = React.useState({
+    technical: null, fundamental: null, risk: null, orchestrator: null,
+  });
+  const [errors, setErrors] = React.useState({});
+
+  // ── Panel drag system ──────────────────────────────────────────────────────
+  const { panels, onTitleMouseDown, toggleMinimize, toggleMaximize } = usePanels();
+
+  // ── Mobile detection ───────────────────────────────────────────────────────
+  const [isMobile, setIsMobile] = React.useState(window.innerWidth < 900);
+  React.useEffect(() => {
+    const handler = () => setIsMobile(window.innerWidth < 900);
+    window.addEventListener('resize', handler);
+    return () => window.removeEventListener('resize', handler);
+  }, []);
+
+  // ── Analysis orchestration (unchanged logic) ───────────────────────────────
+  const isAnalyzingRef = React.useRef(false);
+  const autoRefreshRef = React.useRef(null);
+
+  const setAgentState = React.useCallback((agent, status) => {
+    setAgentStates(prev => ({ ...prev, [agent]: status }));
+  }, []);
+
+  const runAnalysis = React.useCallback(async () => {
+    if (!ticker.trim() || isAnalyzingRef.current) return;
+    isAnalyzingRef.current = true;
+    setAnalyzing(true);
+    setErrors({});
+    setAgentResults({ technical: null, fundamental: null, risk: null, orchestrator: null });
+    setAgentStates({ technical: 'fetching', fundamental: 'fetching', risk: 'waiting', orchestrator: 'waiting' });
+
+    const sym = ticker.trim().toUpperCase();
+    let techResult = null, fundResult = null, riskResult = null;
+    const newErrors = {};
+
+    const [techOutcome, fundOutcome] = await Promise.allSettled([
+      runTechnicalAgent(sym, s => setAgentState('technical', s)),
+      runFundamentalAgent(sym, s => setAgentState('fundamental', s)),
+    ]);
+
+    if (techOutcome.status === 'fulfilled') {
+      techResult = techOutcome.value;
+      setAgentResults(p => ({ ...p, technical: techResult }));
+      setAgentState('technical', 'ready');
+    } else {
+      newErrors.technical = techOutcome.reason?.message || 'Error en análisis técnico';
+      setAgentState('technical', 'error');
+    }
+
+    if (fundOutcome.status === 'fulfilled') {
+      fundResult = fundOutcome.value;
+      setAgentResults(p => ({ ...p, fundamental: fundResult }));
+      setAgentState('fundamental', 'ready');
+    } else {
+      newErrors.fundamental = fundOutcome.reason?.message || 'Error en análisis fundamental';
+      setAgentState('fundamental', 'error');
+    }
+
+    setAgentState('risk', 'analyzing');
+    try {
+      riskResult = runRiskAgent(techResult, fundResult, profile);
+      setAgentResults(p => ({ ...p, risk: riskResult }));
+      setAgentState('risk', 'ready');
+    } catch (e) {
+      newErrors.risk = e?.message || 'Error en gestión de riesgo';
+      setAgentState('risk', 'error');
+    }
+
+    setErrors({ ...newErrors });
+
+    if (techResult || fundResult) {
+      setAgentState('orchestrator', 'fetching');
+      try {
+        const orchResult = await runOrchestratorAgent(
+          techResult  || { error: newErrors.technical },
+          fundResult  || { error: newErrors.fundamental },
+          riskResult  || { error: newErrors.risk },
+          profile, s => setAgentState('orchestrator', s),
+        );
+        setAgentResults(p => ({ ...p, orchestrator: orchResult }));
+        setAgentState('orchestrator', 'ready');
+      } catch (e) {
+        setErrors(p => ({ ...p, orchestrator: e?.message || 'Error en orquestador' }));
+        setAgentState('orchestrator', 'error');
+      }
+    } else {
+      setErrors(p => ({ ...p, orchestrator: 'Datos insuficientes' }));
+      setAgentState('orchestrator', 'error');
+    }
+
+    isAnalyzingRef.current = false;
+    setAnalyzing(false);
+  }, [ticker, profile, setAgentState]);
+
+  React.useEffect(() => {
+    clearInterval(autoRefreshRef.current);
+    if (autoRefresh) autoRefreshRef.current = setInterval(runAnalysis, 15 * 60 * 1000);
+    return () => clearInterval(autoRefreshRef.current);
+  }, [autoRefresh, runAnalysis]);
+
+  // ── Panel helpers ──────────────────────────────────────────────────────────
+  const panelProps = (id) => {
+    const panel = panels.find(p => p.id === id);
+    return {
+      panel,
+      onMouseDown: onTitleMouseDown,
+      onMinimize: () => toggleMinimize(id),
+      onMaximize: () => toggleMaximize(id),
+    };
+  };
+
+  const orch = agentResults.orchestrator;
+  const tech = agentResults.technical;
+  const fund = agentResults.fundamental;
+  const risk = agentResults.risk;
+
+  // ── Render ─────────────────────────────────────────────────────────────────
+  if (isMobile) return <MobileFallback />;
+
+  return (
+    <div style={{
+      background: T.bg,
+      backgroundImage: SCANLINES,
+      minHeight: '100vh',
+      fontFamily: T.font,
+      position: 'relative',
+      overflow: 'hidden',
+    }}>
+      <GlobalHeader autoRefresh={autoRefresh} />
+
+      {/* Canvas for draggable panels */}
+      <div style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}>
+
+        <TerminalPanel {...panelProps('syscfg')} title="[SYS.CFG] INVESTOR PROFILE">
+          <SysCfgPanel
+            profile={profile} setProfile={setProfile}
+            autoRefresh={autoRefresh} setAutoRefresh={setAutoRefresh}
+          />
+        </TerminalPanel>
+
+        <TerminalPanel {...panelProps('mktin')} title="[MKT.IN] MARKET INPUT">
+          <MktInPanel
+            ticker={ticker} setTicker={setTicker}
+            isAnalyzing={isAnalyzing} onAnalyze={runAnalysis}
+            agentStates={agentStates} agentResults={agentResults} errors={errors}
+          />
+        </TerminalPanel>
+
+        <TerminalPanel {...panelProps('prcdat')} title="[PRC.DAT] PRICE DATA">
+          <PrcDatPanel tech={tech} ticker={ticker.toUpperCase()} />
+        </TerminalPanel>
+
+        <TerminalPanel {...panelProps('anlytcs')} title="[ANLYTCS] ANALYTICS">
+          <AnalyticsPanel tech={tech} fund={fund} risk={risk} />
+        </TerminalPanel>
+
+        <TerminalPanel {...panelProps('sigout')} title="[SIG.OUT] SIGNAL OUTPUT">
+          <SigOutPanel
+            orch={orch} tech={tech} fund={fund} risk={risk}
+            profile={profile} errors={errors}
+          />
+        </TerminalPanel>
+
+      </div>
+    </div>
+  );
+}
+
