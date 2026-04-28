@@ -959,3 +959,150 @@ function AnalyticsPanel({ tech, fund, risk }) {
   );
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// COMPONENT: ConfidenceRing — animated SVG donut, value 0–100
+// ─────────────────────────────────────────────────────────────────────────────
+
+function ConfidenceRing({ value }) {
+  const [displayed, setDisplayed] = React.useState(0);
+  React.useEffect(() => {
+    const t = setTimeout(() => setDisplayed(value), 50); // trigger CSS transition after mount
+    return () => clearTimeout(t);
+  }, [value]);
+
+  const size = 120, sw = 10;
+  const r = (size - sw) / 2;
+  const circ = 2 * Math.PI * r;
+  const offset = circ - (displayed / 100) * circ;
+  const color = displayed >= 70 ? T.green : displayed >= 50 ? T.yellow : T.red;
+
+  return (
+    <div style={{ position: 'relative', width: size, height: size,
+                  display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
+      <svg width={size} height={size}
+           style={{ position: 'absolute', transform: 'rotate(-90deg)' }}>
+        <circle cx={size/2} cy={size/2} r={r} fill="none"
+                stroke={T.greenDark} strokeWidth={sw} />
+        <circle cx={size/2} cy={size/2} r={r} fill="none"
+                stroke={color} strokeWidth={sw}
+                strokeDasharray={circ}
+                strokeDashoffset={offset}
+                strokeLinecap="round"
+                style={{ transition: 'stroke-dashoffset 0.8s ease, stroke 0.3s ease' }} />
+      </svg>
+      <div style={{ position: 'relative', textAlign: 'center', fontFamily: T.font }}>
+        <div style={{ color, fontSize: 20, fontWeight: 'bold', lineHeight: 1 }}>{value}</div>
+        <div style={{ color: T.greenMid, fontSize: 9, marginTop: 2 }}>%</div>
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PANEL: [SIG.OUT] — Final recommendation output
+// ─────────────────────────────────────────────────────────────────────────────
+
+function SigOutPanel({ orch, tech, fund, risk, profile, errors }) {
+  if (!orch) {
+    return (
+      <div style={{ color: T.greenDark, fontSize: 11 }}>
+        <div style={{ marginBottom: 12 }}>SIGNAL......: AWAITING INPUT</div>
+        <ConfidenceRing value={0} />
+        <div style={{ marginTop: 12, color: T.greenDark }}>
+          Run an analysis to see the recommendation.
+        </div>
+      </div>
+    );
+  }
+
+  const action = orch.final_action?.toUpperCase() || 'HOLD';
+  const actionColor = action === 'BUY' ? T.green : action === 'SELL' ? T.red : T.yellow;
+  const capitalAlloc = profile.capital * (orch.portfolio_weight / 100);
+  const pctTarget = tech?.currentPrice && orch.price_target
+    ? ((orch.price_target / tech.currentPrice - 1) * 100).toFixed(1) : null;
+  const pctStop = tech?.currentPrice && orch.stop_loss
+    ? ((orch.stop_loss / tech.currentPrice - 1) * 100).toFixed(1) : null;
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10, fontSize: 11 }}>
+      {/* Action + Ring */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+        <div>
+          <div style={{ color: T.greenDark, fontSize: 10, marginBottom: 4 }}>FINAL SIGNAL</div>
+          <div style={{
+            color: actionColor, fontSize: 22, fontWeight: 'bold',
+            border: `1px solid ${actionColor}`, padding: '6px 16px',
+            letterSpacing: '0.2em',
+            boxShadow: `0 0 10px ${actionColor}40`,
+          }}>
+            ▓ {action} ▓
+          </div>
+          {orch.contradiction_detected && (
+            <div style={{ color: T.yellow, fontSize: 10, marginTop: 6 }}>
+              ⚠ CONTRADICTION DETECTED
+            </div>
+          )}
+        </div>
+        <div>
+          <div style={{ color: T.greenDark, fontSize: 10, marginBottom: 4 }}>CONFIDENCE</div>
+          <ConfidenceRing value={orch.confidence_score || 0} />
+        </div>
+      </div>
+
+      {/* Metrics */}
+      <div style={{ borderTop: `1px solid ${T.greenDark}`, paddingTop: 8 }}>
+        {[
+          row('PRICE TARGET', orch.price_target ? `$${orch.price_target.toFixed(2)}${pctTarget ? ` (${pctTarget > 0 ? '+' : ''}${pctTarget}%)` : ''}` : '---'),
+          row('STOP LOSS', orch.stop_loss ? `$${orch.stop_loss.toFixed(2)}${pctStop ? ` (${pctStop}%)` : ''}` : '---'),
+          row('PORTFOLIO', `${orch.portfolio_weight}% = $${capitalAlloc.toLocaleString('en', { maximumFractionDigits: 0 })}`),
+          row('CONTRADICTION', orch.contradiction_detected ? 'YES ⚠' : 'NO'),
+        ].map((line, i) => (
+          <div key={i} style={{ color: T.green, whiteSpace: 'pre', marginBottom: 3 }}>{line}</div>
+        ))}
+      </div>
+
+      {/* Multicriteria justification */}
+      {orch.justification_multicriteria && (
+        <div style={{ borderTop: `1px solid ${T.greenDark}`, paddingTop: 8 }}>
+          <div style={{ color: T.greenMid, fontSize: 10, marginBottom: 4 }}>MULTICRITERIA ANALYSIS</div>
+          {orch.justification_multicriteria.split(' ').reduce((lines, word) => {
+            const last = lines[lines.length - 1];
+            if ((last + ' ' + word).length > 52) lines.push('> ' + word);
+            else lines[lines.length - 1] = last + ' ' + word;
+            return lines;
+          }, ['> ']).map((line, i) => (
+            <div key={i} style={{ color: T.greenMid, fontSize: 11 }}>{line}</div>
+          ))}
+        </div>
+      )}
+
+      {/* Agent signal breakdown */}
+      <div style={{ borderTop: `1px solid ${T.greenDark}`, paddingTop: 8 }}>
+        <div style={{ color: T.greenMid, fontSize: 10, marginBottom: 4 }}>── AGENT SIGNALS ──</div>
+        {[
+          tech && { label: 'TECHNICAL',   signal: tech.signal,      conf: tech.confidence, justification: tech.justification },
+          fund && { label: 'FUNDAMENTAL', signal: fund.signal,      conf: fund.confidence, justification: fund.justification },
+          risk && { label: 'RISK MGMT',   signal: risk.risk_level,  conf: null,            justification: risk.justification },
+        ].filter(Boolean).map(({ label, signal, conf, justification }, i) => {
+          const sig = signal?.toUpperCase() || '---';
+          const sigColor = sig === 'BUY' ? T.green : sig === 'SELL' ? T.red : T.yellow;
+          return (
+            <div key={i} style={{ marginBottom: 6 }}>
+              <div style={{ display: 'flex', gap: 8, fontSize: 11 }}>
+                <span style={{ color: T.greenMid, minWidth: 100 }}>{label}</span>
+                <span style={{ color: sigColor, minWidth: 60 }}>{sig}</span>
+                {conf != null && <span style={{ color: T.greenDark }}>{conf}%</span>}
+              </div>
+              {justification && (
+                <div style={{ color: T.greenDark, fontSize: 10, marginTop: 2, paddingLeft: 8 }}>
+                  {'> '}{justification.slice(0, 70)}{justification.length > 70 ? '…' : ''}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
