@@ -435,3 +435,53 @@ function useDots(active) {
   return dots;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// HOOK: usePanels — drag, minimize, maximize state for all 5 panels
+// ─────────────────────────────────────────────────────────────────────────────
+
+function usePanels() {
+  const [panels, setPanels] = React.useState(INITIAL_PANELS);
+  const [dragging, setDragging] = React.useState(null);
+  const maxZRef = React.useRef(10);
+  const panelsRef = React.useRef(panels);
+
+  React.useEffect(() => { panelsRef.current = panels; }, [panels]);
+
+  const onTitleMouseDown = React.useCallback((id, e) => {
+    if (e.target.closest('[data-no-drag]')) return;
+    e.preventDefault();
+    maxZRef.current += 1;
+    const cur = panelsRef.current.find(p => p.id === id);
+    setPanels(prev => prev.map(p => p.id === id ? { ...p, zIndex: maxZRef.current } : p));
+    setDragging({ id, startMouseX: e.clientX, startMouseY: e.clientY, origPanelX: cur.x, origPanelY: cur.y });
+  }, []);
+
+  React.useEffect(() => {
+    if (!dragging) return;
+    const onMove = (e) => {
+      const panel = panelsRef.current.find(p => p.id === dragging.id);
+      if (!panel || panel.maximized) return;
+      const dx = e.clientX - dragging.startMouseX;
+      const dy = e.clientY - dragging.startMouseY;
+      const newX = Math.max(0, Math.min(window.innerWidth - panel.width, dragging.origPanelX + dx));
+      const newY = Math.max(HEADER_H, Math.min(window.innerHeight - 36, dragging.origPanelY + dy));
+      setPanels(prev => prev.map(p => p.id === dragging.id ? { ...p, x: newX, y: newY } : p));
+    };
+    const onUp = () => setDragging(null);
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    return () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+  }, [dragging]);
+
+  const toggleMinimize = React.useCallback((id) =>
+    setPanels(prev => prev.map(p => p.id === id ? { ...p, minimized: !p.minimized } : p)), []);
+
+  const toggleMaximize = React.useCallback((id) =>
+    setPanels(prev => prev.map(p => p.id === id ? { ...p, maximized: !p.maximized, minimized: false } : p)), []);
+
+  return { panels, onTitleMouseDown, toggleMinimize, toggleMaximize };
+}
+
