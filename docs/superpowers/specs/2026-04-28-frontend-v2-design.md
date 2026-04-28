@@ -2,55 +2,92 @@
 
 **Date:** 2026-04-28  
 **Project:** AI Investment Advisor (InvestmentAdvisor.jsx)  
-**Status:** Approved
+**Status:** Approved — rev 2 (post spec-review)
 
 ---
 
 ## Overview
 
-Redesign the frontend from a static sidebar+panel layout to a Bloomberg-style financial terminal with draggable panels, green-on-black monospace aesthetic, and richer data visualization. All logic remains in the single `InvestmentAdvisor.jsx` file. No new dependencies beyond existing React, Recharts, and Tailwind.
+Redesign the frontend from a static sidebar+panel layout to a Bloomberg-style financial terminal with draggable panels, green-on-black monospace aesthetic, and richer data visualization. All logic remains in the single `InvestmentAdvisor.jsx` file. No new npm dependencies beyond existing React and Recharts.
+
+**Expected file size after v2.0:** ~1600–1800 lines (up from ~1100). Single file is intentional per project constraint.
 
 ---
 
 ## 1. Visual Design System
 
-### Color Palette
+### Color Palette — Inline Styles Only
 
-| Token | Hex | Usage |
-|---|---|---|
-| `bg-terminal` | `#000000` | Page background |
-| `green-primary` | `#00ff41` | Main text, active borders, highlights |
-| `green-mid` | `#00cc33` | Secondary metrics, labels |
-| `green-dark` | `#003311` | Panel borders at rest |
-| `green-glow` | `#00ff4120` | box-shadow on panels |
-| `bg-panel` | `#050f05` | Panel background |
-| `bg-panel-header` | `#001a00` | Panel title bar |
-| `red-terminal` | `#ff3333` | SELL signal, errors |
-| `yellow-terminal` | `#ffcc00` | HOLD signal, warnings |
+All custom colors are applied via `style={{}}` inline props. **Do NOT add anything to `tailwind.config.js`** and do not use Tailwind class names for these custom colors (they would silently do nothing without config changes).
+
+```javascript
+// Use this constants object at the top of the file
+const T = {
+  bg:          '#000000',
+  bgPanel:     '#050f05',
+  bgHeader:    '#001a00',
+  green:       '#00ff41',
+  greenMid:    '#00cc33',
+  greenDark:   '#003311',
+  greenGlow:   'rgba(0,255,65,0.12)',
+  red:         '#ff3333',
+  yellow:      '#ffcc00',
+  font:        "'Courier New', Courier, monospace",
+};
+```
+
+Tailwind may still be used for spacing (`p-4`, `mt-2`, `flex`, `grid`, etc.) — just not for colors.
 
 ### Typography
-- **Font family:** `'Courier New', Courier, monospace` — applied globally to the component
-- **Numbers:** right-aligned, consistent size, monospace ensures column alignment
-- **Labels:** UPPERCASE, letter-spacing: 0.1em
-- **No Google Fonts or external font imports**
+- **Font family:** `T.font` applied to the root wrapper `style={{ fontFamily: T.font }}`
+- **Numbers/values:** right-aligned in their column
+- **Labels:** uppercase, `letterSpacing: '0.08em'`
 
-### Terminal Effects
-- **Scanlines:** `repeating-linear-gradient(transparent 0px, transparent 3px, rgba(0,255,65,0.03) 3px, rgba(0,255,65,0.03) 4px)` as a fixed overlay on `::before` pseudo-element (or via inline `backgroundImage` on a wrapper div)
-- **Panel glow:** `box-shadow: 0 0 12px #00ff4120, 0 0 1px #00ff4140`
-- **Cursor blink:** CSS keyframe `blink` on ticker input caret (`caretColor: '#00ff41'`)
-- **Analyzing animation:** `>>> ANALIZANDO.` → `>>> ANALIZANDO..` → `>>> ANALIZANDO...` cycling via `useEffect` interval
+### Scanlines Effect
+Applied as a `backgroundImage` on the root wrapper div. **Do NOT use `::before` pseudo-elements** (requires a CSS stylesheet not available in this stack).
+
+```javascript
+backgroundImage: 'repeating-linear-gradient(transparent 0px, transparent 3px, rgba(0,255,65,0.025) 3px, rgba(0,255,65,0.025) 4px)'
+```
+
+### Analyzing Animation
+When any agent is in `fetching` or `analyzing` state, show animated dots:
+```javascript
+// useEffect with setInterval(100ms) cycling:
+// ">>> ANALIZANDO." → ">>> ANALIZANDO.." → ">>> ANALIZANDO..."
+```
+Implemented via a `useDots()` hook that returns the current dot string.
 
 ### Agent Status Badges
-Replace dot indicators with bracketed monospace badges:
+Monospace bracketed strings with inline color:
 
 | State | Badge | Color |
 |---|---|---|
-| idle | `[IDLE ]` | `#003311` |
-| waiting | `[WAIT ]` | `#006622` |
-| fetching | `[FETCH]` | `#00ff41` (pulse) |
-| analyzing | `[ANLZ.]` | `#00ff41` (pulse) |
-| ready | `[READY]` | `#00ff41` |
-| error | `[ERR! ]` | `#ff3333` |
+| idle | `[IDLE ]` | `T.greenDark` |
+| waiting | `[WAIT ]` | `T.greenMid` dim |
+| fetching | `[FETCH]` | `T.green` + `animate-pulse` |
+| analyzing | `[ANLZ.]` | `T.green` + `animate-pulse` |
+| ready | `[READY]` | `T.green` |
+| error | `[ERR! ]` | `T.red` |
+
+### ASCII Progress Bar
+10-char bar filling proportionally to agent pipeline stage (0→fetch→analyze→ready = 0→33→66→100%):
+```javascript
+const bar = (pct) => {
+  const filled = Math.round(pct / 10);
+  return '█'.repeat(filled) + '░'.repeat(10 - filled);
+};
+```
+
+### Dot Leaders (ANLYTCS panel)
+Use JS string padding in monospace. Labels are left-padded to a fixed width, values right-padded:
+```javascript
+const row = (label, value, width = 22) => {
+  const dots = '.'.repeat(Math.max(1, width - label.length - String(value).length));
+  return `${label}${dots}${value}`;
+};
+// e.g. "RSI(14)........  62.4"
+```
 
 ---
 
@@ -60,98 +97,86 @@ Replace dot indicators with bracketed monospace badges:
 ```javascript
 {
   id: string,
-  x: number,       // left position in px
-  y: number,       // top position in px
-  zIndex: number,  // stacking order (increases on click)
-  minimized: boolean,
-  maximized: boolean,
+  x: number,          // left offset in px
+  y: number,          // top offset in px
+  width: number,      // px — fixed per panel, used for bounds clamping and maximize restore
+  height: number,     // px — fixed per panel, used for maximize restore
+  zIndex: number,     // stacking order, increases on focus
+  minimized: boolean, // true → only title bar visible
+  maximized: boolean, // true → position:fixed, fills viewport minus header
 }
 ```
 
-### Default Panel Layout (1280px viewport reference)
+### Default Panel Positions (1280px viewport reference)
+```javascript
+const INITIAL_PANELS = [
+  { id: 'syscfg',   x: 20,  y: 80,  width: 340, height: 380, zIndex: 1, minimized: false, maximized: false },
+  { id: 'mktin',    x: 380, y: 80,  width: 380, height: 400, zIndex: 2, minimized: false, maximized: false },
+  { id: 'prcdat',   x: 780, y: 80,  width: 420, height: 300, zIndex: 3, minimized: false, maximized: false },
+  { id: 'anlytcs',  x: 20,  y: 490, width: 560, height: 320, zIndex: 4, minimized: false, maximized: false },
+  { id: 'sigout',   x: 600, y: 410, width: 610, height: 460, zIndex: 5, minimized: false, maximized: false },
+];
 ```
-[SYS.CFG]  340×380px   left:20    top:80
-[MKT.IN]   380×400px   left:380   top:80
-[PRC.DAT]  400×300px   left:780   top:80
-[ANLYTCS]  560×320px   left:20    top:480
-[SIG.OUT]  600×460px   left:600   top:400
+
+### Mobile Handling
+On viewports narrower than 900px, render a fullscreen message instead of the panel layout:
 ```
-
-### The 5 Panels
-
-#### `[SYS.CFG]` — INVESTOR PROFILE
-Config inputs in terminal style:
-- Capital: text input right-aligned, `$ 50,000.00` formatted
-- Risk profile: custom styled `<select>` with green border
-- Time horizon: `<select>`
-- Preferred sectors: comma-separated text input
-- Auto-refresh toggle: ASCII-styled `[OFF] ──● [ON]`
-
-#### `[MKT.IN]` — MARKET INPUT
-- Ticker input with `>` prompt prefix and blinking cursor
-- `[ANALYZE ▶]` button — green border, black bg, hover fills green
-- 4 agent rows, each showing: name, status badge, ASCII progress bar, signal badge (when ready)
-- ASCII progress bar: `████████░░` — 10 chars, fills proportionally to status stage
-
-#### `[PRC.DAT]` — PRICE DATA
-- Ticker + current price large, % change with ▲/▼ arrow
-- Recharts `LineChart` with:
-  - stroke `#00ff41`, strokeWidth 1.5
-  - No axes except minimal X dates
-  - Custom green tooltip
-  - No grid lines (or very subtle `#001a00` lines)
-  - Fill area below line with gradient `#00ff4108` → transparent
-
-#### `[ANLYTCS]` — ANALYTICS
-Three equal columns:
-- **TECHNICAL:** RSI(14), SMA50, SMA200, MACD, trend direction
-- **FUNDAMENTAL:** P/E, ROE, PEG, Quality Score /100, Valuation label
-- **RISK:** Risk level, Volatility 30d, VaR 95%, Beta, Max weight
-
-All values right-aligned with `....` dot leaders between label and value.
-
-#### `[SIG.OUT]` — SIGNAL OUTPUT
-- Final action: large bracketed badge `▓▓▓ BUY ▓▓▓` / `▓▓▓ SELL ▓▓▓` / `▓▓▓ HOLD ▓▓▓`
-- SVG confidence ring with green stroke, value centered
-- Price target and stop loss with % delta from current price
-- Portfolio allocation: `8.0% = $4,000.00`
-- Contradiction flag if detected
-- Multicriteria justification in a `>` prefixed text block
-- Per-agent signal breakdown (collapsible rows)
+╔══════════════════════════════╗
+║  TERMINAL MODE               ║
+║  Requires desktop browser    ║
+║  min-width: 900px            ║
+╚══════════════════════════════╝
+```
+Detect with `window.innerWidth` on mount and a resize listener. No draggable panels on mobile.
 
 ---
 
-## 3. Drag System
+## 3. Drag System (`usePanels` hook)
 
-### Implementation
+### State and Refs
 ```javascript
-// Custom hook
-function usePanels(initialPositions) {
-  const [panels, setPanels] = useState(initialPositions);
-  const [dragging, setDragging] = useState(null); // { id, startX, startY, origX, origY }
-  const maxZ = useRef(10);
+function usePanels() {
+  const [panels, setPanels] = useState(INITIAL_PANELS);
+  const [dragging, setDragging] = useState(null);
+  // { id, startMouseX, startMouseY, origPanelX, origPanelY }
+  const maxZRef = useRef(10);
+  const panelsRef = useRef(panels); // sync ref to avoid stale closures in event handlers
 
-  const onMouseDown = (id, e) => {
-    if (e.target.closest('[data-no-drag]')) return; // inputs, buttons
-    maxZ.current += 1;
-    setPanels(p => p.map(panel =>
-      panel.id === id ? { ...panel, zIndex: maxZ.current } : panel
-    ));
-    setDragging({ id, startX: e.clientX, startY: e.clientY,
-                  origX: panels.find(p => p.id === id).x,
-                  origY: panels.find(p => p.id === id).y });
+  useEffect(() => { panelsRef.current = panels; }, [panels]);
+```
+
+### `onTitleMouseDown(id, e)`
+```javascript
+  const onTitleMouseDown = (id, e) => {
+    if (e.target.closest('[data-no-drag]')) return;
+    e.preventDefault();
+    maxZRef.current += 1;
+    const current = panelsRef.current.find(p => p.id === id); // use ref, not stale closure
+    setPanels(prev => prev.map(p => p.id === id ? { ...p, zIndex: maxZRef.current } : p));
+    setDragging({
+      id,
+      startMouseX: e.clientX,
+      startMouseY: e.clientY,
+      origPanelX: current.x,
+      origPanelY: current.y,
+    });
   };
+```
 
+### Mouse Move / Up (with bounds clamping)
+```javascript
   useEffect(() => {
     if (!dragging) return;
     const onMove = (e) => {
-      const dx = e.clientX - dragging.startX;
-      const dy = e.clientY - dragging.startY;
-      setPanels(p => p.map(panel =>
-        panel.id === dragging.id
-          ? { ...panel, x: dragging.origX + dx, y: dragging.origY + dy }
-          : panel
-      ));
+      const dx = e.clientX - dragging.startMouseX;
+      const dy = e.clientY - dragging.startMouseY;
+      const panel = panelsRef.current.find(p => p.id === dragging.id);
+      const HEADER_H = 70;
+      const newX = Math.max(0, Math.min(window.innerWidth - panel.width, dragging.origPanelX + dx));
+      const newY = Math.max(HEADER_H, Math.min(window.innerHeight - 36, dragging.origPanelY + dy));
+      // newY min = HEADER_H (never goes above header)
+      // newY max = viewport - 36px (title bar always reachable)
+      setPanels(prev => prev.map(p => p.id === dragging.id ? { ...p, x: newX, y: newY } : p));
     };
     const onUp = () => setDragging(null);
     window.addEventListener('mousemove', onMove);
@@ -160,24 +185,183 @@ function usePanels(initialPositions) {
       window.removeEventListener('mousemove', onMove);
       window.removeEventListener('mouseup', onUp);
     };
-  }, [dragging]);
+  }, [dragging]); // dragging is the only dep; panel dimensions read via panelsRef
+```
 
-  return { panels, setPanels, onMouseDown };
+### Minimize / Maximize
+```javascript
+  const toggleMinimize = (id) =>
+    setPanels(prev => prev.map(p => p.id === id ? { ...p, minimized: !p.minimized } : p));
+
+  const toggleMaximize = (id) =>
+    setPanels(prev => prev.map(p => p.id === id ? { ...p, maximized: !p.maximized, minimized: false } : p));
+
+  return { panels, onTitleMouseDown, toggleMinimize, toggleMaximize };
 }
 ```
 
-### Panel Title Bar
-```
-┌─ [SYS.CFG] INVESTOR PROFILE ──────────── [−] [□] ─┐
-```
-- Full-width bar, `cursor: grab` / `grabbing`
-- `[−]` toggles `minimized` (panel collapses to title bar only)
-- `[□]` toggles `maximized` (panel expands to fill viewport, `position: fixed`)
-- Inputs and buttons inside panels get `data-no-drag` to prevent drag initiation
+### Maximized Panel Behavior
+- When a panel is maximized: it renders as `position: fixed, top: 70px, left: 0, right: 0, bottom: 0` (fills viewport below header)
+- All other panels remain rendered but are visually behind (`zIndex` lower)
+- No dragging while maximized (title bar still shows minimize/restore buttons; `[□]` becomes `[▣]` to indicate restore)
+- Clicking `[▣]` restores the panel to its stored `x, y, width, height`
 
 ---
 
-## 4. Global Header
+## 4. `TerminalPanel` Component
+
+Wrapper used by all 5 panels:
+
+```jsx
+function TerminalPanel({ panel, title, onMouseDown, onMinimize, onMaximize, children }) {
+  const isMaximized = panel.maximized;
+  const style = isMaximized
+    ? { position: 'fixed', top: 70, left: 0, right: 0, bottom: 0, zIndex: panel.zIndex }
+    : { position: 'absolute', left: panel.x, top: panel.y,
+        width: panel.width, zIndex: panel.zIndex };
+
+  return (
+    <div style={{ ...style, background: T.bgPanel, border: `1px solid ${T.greenDark}`,
+                  boxShadow: `0 0 12px ${T.greenGlow}`, fontFamily: T.font }}>
+      {/* Title bar */}
+      <div
+        onMouseDown={(e) => onMouseDown(panel.id, e)}
+        style={{ background: T.bgHeader, cursor: panel.maximized ? 'default' : 'grab',
+                 padding: '4px 8px', display: 'flex', justifyContent: 'space-between',
+                 borderBottom: `1px solid ${T.greenDark}`, userSelect: 'none' }}
+      >
+        <span style={{ color: T.green, fontSize: 11 }}>─ {title} ─</span>
+        <span data-no-drag style={{ color: T.greenMid, fontSize: 11, cursor: 'pointer' }}>
+          <span onClick={onMinimize} style={{ marginRight: 8 }}>[{panel.minimized ? '+' : '−'}]</span>
+          <span onClick={onMaximize}>[{panel.maximized ? '▣' : '□'}]</span>
+        </span>
+      </div>
+      {/* Content — hidden when minimized */}
+      {!panel.minimized && (
+        <div data-no-drag style={{ padding: 12, overflowY: 'auto',
+                                   height: isMaximized ? 'calc(100% - 28px)' : panel.height - 28 }}>
+          {children}
+        </div>
+      )}
+    </div>
+  );
+}
+```
+
+---
+
+## 5. Panel Content Details
+
+### Empty / Loading States
+When no analysis has run yet, panels show placeholder dashes:
+- `[PRC.DAT]`: `TICKER......: ---` · `PRICE.......: $---.--` · flat line chart placeholder
+- `[ANLYTCS]`: all metric values show `---`
+- `[SIG.OUT]`: `SIGNAL......: AWAITING INPUT` · confidence ring at 0% greyed out
+
+### `[SYS.CFG]` — INVESTOR PROFILE
+```
+CAPITAL.......: $ [50000      ]
+RISK PROFILE..: [ MODERATE  ▼]
+TIME HORIZON..: [ MEDIUM    ▼]
+SECTORS.......: [tech, finance]
+                ─────────────
+AUTO-REFRESH..: [OFF] ──●── [ON]   ← full row is clickable, toggles boolean
+```
+All `<input>` and `<select>` elements have `data-no-drag` to prevent drag initiation on focus.  
+The auto-refresh row: clicking anywhere on the row calls `setAutoRefresh(v => !v)`.
+
+### `[MKT.IN]` — MARKET INPUT
+```
+> [AAPL              ] [ANALYZE ▶]
+
+  AGENT 01 · TECHNICAL    [READY] ██████████ BUY  75%
+  AGENT 02 · FUNDAMENTAL  [ANLZ.] ██████░░░░ ...
+  AGENT 03 · RISK MGT     [IDLE ] ░░░░░░░░░░
+  AGENT 04 · ORCHESTRATOR [WAIT ] ░░░░░░░░░░
+```
+Progress bar stage mapping: idle=0%, waiting=10%, fetching=40%, analyzing=70%, ready=100%, error=100% (red).
+
+### `[PRC.DAT]` — PRICE DATA
+```
+AAPL                           $182.34
+                               ▲ +4.2% (60d)
+┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄
+[Recharts LineChart — green stroke, area fill, no grid]
+```
+Recharts config:
+- `stroke: T.green`, `strokeWidth: 1.5`, `dot: false`
+- Area fill: `fill="url(#greenGradient)"` with a `<defs>` gradient from `#00ff4120` to transparent
+- No `YAxis`, minimal `XAxis` with green tick labels
+- Custom tooltip with `T.bgPanel` background and `T.green` text
+
+### `[ANLYTCS]` — ANALYTICS (3 equal columns)
+```
+── TECHNICAL ─────   ── FUNDAMENTAL ──   ── RISK ────────
+RSI(14)......62.4   P/E RATIO....24.3   LEVEL.....HIGH
+SMA 50...$178.20    ROE..........38.2%  VOL 30d...28.4%
+SMA 200..$165.40    PEG RATIO.....1.2   VaR(95%)...$4.20
+MACD.....0.0024     QUALITY...75/100    BETA.......1.34
+TREND....▲ BULL     VALUATION..FAIR     MAX WT.....8.0%
+```
+Rendered using the `row(label, value)` dot-leader function from Section 1.
+
+### `[SIG.OUT]` — SIGNAL OUTPUT
+```
+FINAL SIGNAL                         CONFIDENCE
+▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓
+▓▓▓▓▓▓  BUY  ▓▓▓▓▓▓       [SVG ring — see below]
+▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓
+
+PRICE TARGET......: $198.00   (+8.6% from current)
+STOP LOSS.........: $168.00   (-7.9% from current)
+PORTFOLIO.........: 8.0% = $4,000.00
+CONTRADICTION.....: NO
+
+MULTICRITERIA ANALYSIS:
+> [justification_multicriteria text, word-wrapped]
+
+── AGENT SIGNALS ─────────────────────────────
+TECHNICAL.....: BUY   75%  [justification line 1]
+FUNDAMENTAL...: BUY   80%  [justification line 1]
+RISK MGMT.....: MODERATE   [justification line 1]
+```
+
+---
+
+## 6. Confidence Ring (SVG)
+
+**Spec:** `size=120px`, `strokeWidth=10`, value range `0–100`.
+
+```jsx
+function ConfidenceRing({ value }) {
+  const size = 120, sw = 10;
+  const r = (size - sw) / 2;
+  const circ = 2 * Math.PI * r;
+  const offset = circ - (value / 100) * circ;
+  const color = value >= 70 ? T.green : value >= 50 ? T.yellow : T.red;
+  return (
+    <div style={{ position: 'relative', width: size, height: size, display: 'inline-flex',
+                  alignItems: 'center', justifyContent: 'center' }}>
+      <svg width={size} height={size} style={{ position: 'absolute', transform: 'rotate(-90deg)' }}>
+        <circle cx={size/2} cy={size/2} r={r} fill="none" stroke={T.greenDark} strokeWidth={sw} />
+        <circle cx={size/2} cy={size/2} r={r} fill="none" stroke={color} strokeWidth={sw}
+                strokeDasharray={circ} strokeDashoffset={offset} strokeLinecap="round"
+                style={{ transition: 'stroke-dashoffset 0.7s ease' }} />
+      </svg>
+      <div style={{ position: 'relative', textAlign: 'center', fontFamily: T.font }}>
+        <div style={{ color, fontSize: 22, fontWeight: 'bold' }}>{value}</div>
+        <div style={{ color: T.greenMid, fontSize: 10 }}>%</div>
+      </div>
+    </div>
+  );
+}
+```
+
+Animation: `stroke-dashoffset` transitions from `circ` (0%) to the computed offset on first render. Use `useEffect` to set value after mount for the animation to trigger.
+
+---
+
+## 7. Global Header
 
 ```
 ╔══════════════════════════════════════════════════════════╗
@@ -186,48 +370,29 @@ function usePanels(initialPositions) {
 ╚══════════════════════════════════════════════════════════╝
 ```
 
-- Clock updates every second via `setInterval` in `useEffect`
-- Fixed at top, not draggable, height ~70px
-- Green border bottom
+- `position: fixed`, `top: 0`, `left: 0`, `right: 0`, `height: 70px`, `zIndex: 9999`
+- Clock: `new Date().toUTCString().slice(17, 25)` updated every second via `setInterval` in `useEffect` with cleanup
+- Background: `T.bg`, border-bottom: `1px solid T.green`
 
 ---
 
-## 5. Component Structure
+## 8. What Does NOT Change
 
-The file remains a single `InvestmentAdvisor.jsx`. Internal organization:
-
-```
-// 1. Financial math utilities      (unchanged)
-// 2. Agent functions               (unchanged)
-// 3. usePanels hook                (NEW)
-// 4. TerminalPanel wrapper         (NEW) — handles drag, min/max, border
-// 5. Panel content components      (REDESIGNED)
-//    ├── SysCfgPanel
-//    ├── MktInPanel
-//    ├── PrcDatPanel
-//    ├── AnalyticsPanel
-//    └── SigOutPanel
-// 6. GlobalHeader                  (NEW)
-// 7. InvestmentAdvisor (main)      (UPDATED layout)
-```
-
----
-
-## 6. What Does NOT Change
-
-- All financial math (RSI, MACD, SMA, EMA, volatility)
-- All 4 agent functions (`runTechnicalAgent`, `runFundamentalAgent`, `runRiskAgent`, `runOrchestratorAgent`)
-- `window.ENV` API key reading
+- Financial math utilities (RSI, MACD, SMA, EMA, volatility)
+- Agent functions (`runTechnicalAgent`, `runFundamentalAgent`, `runRiskAgent`, `runOrchestratorAgent`)
+- `window.ENV` API key reading and proxy fallback logic
 - Vercel proxy routes (`api/yahoo.js`, `api/alpha.js`, `api/claude.js`)
-- Auto-refresh logic
-- Error handling per agent
+- Auto-refresh 15-minute interval logic (state variable name unchanged: `autoRefresh`)
+- Error handling per agent (partial data passed to orchestrator on failure)
 
 ---
 
-## 7. Constraints
+## 9. Constraints
 
-- Single JSX file, no new npm dependencies
-- Tailwind inline styles supplement via `style={{}}` for terminal-specific colors not in default palette
-- Recharts remains the only charting library
+- Single JSX file, ~1600–1800 lines expected
+- No new npm dependencies
+- `style={{}}` inline props for all custom colors (no `tailwind.config.js` changes)
+- Tailwind utility classes allowed for spacing/flex/grid only
+- Recharts is the only charting library
 - No `localStorage` / `sessionStorage`
-- Touch drag not required (desktop terminal aesthetic)
+- Touch/mobile drag not implemented; mobile shows "Desktop only" message at `< 900px`
