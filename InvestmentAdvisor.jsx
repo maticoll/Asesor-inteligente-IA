@@ -485,3 +485,132 @@ function usePanels() {
   return { panels, onTitleMouseDown, toggleMinimize, toggleMaximize };
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// COMPONENT: TerminalPanel — draggable panel shell used by all 5 panels
+// ─────────────────────────────────────────────────────────────────────────────
+
+function TerminalPanel({ panel, title, onMouseDown, onMinimize, onMaximize, children }) {
+  const isMax = panel.maximized;
+  const containerStyle = isMax
+    ? { position: 'fixed', top: HEADER_H, left: 0, right: 0, bottom: 0, zIndex: panel.zIndex }
+    : { position: 'absolute', left: panel.x, top: panel.y, width: panel.width, zIndex: panel.zIndex };
+
+  return (
+    <div style={{
+      ...containerStyle,
+      background: T.bgPanel,
+      border: `1px solid ${T.greenDark}`,
+      boxShadow: `0 0 14px ${T.greenGlow}, 0 0 1px ${T.greenDark}`,
+      fontFamily: T.font,
+    }}>
+      {/* ── Title bar (drag handle) ── */}
+      <div
+        onMouseDown={(e) => !isMax && onMouseDown(panel.id, e)}
+        style={{
+          background: T.bgHeader,
+          cursor: isMax ? 'default' : 'grab',
+          padding: '5px 10px',
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          borderBottom: `1px solid ${T.greenDark}`,
+          userSelect: 'none',
+          height: 28,
+        }}
+      >
+        <span style={{ color: T.green, fontSize: 11, letterSpacing: '0.05em' }}>
+          ─ {title} ─
+        </span>
+        <span data-no-drag style={{ color: T.greenMid, fontSize: 11, display: 'flex', gap: 10 }}>
+          <span
+            onClick={onMinimize}
+            style={{ cursor: 'pointer', padding: '0 2px' }}
+            title={panel.minimized ? 'Restore' : 'Minimize'}
+          >
+            [{panel.minimized ? '+' : '−'}]
+          </span>
+          <span
+            onClick={onMaximize}
+            style={{ cursor: 'pointer', padding: '0 2px' }}
+            title={isMax ? 'Restore' : 'Maximize'}
+          >
+            [{isMax ? '▣' : '□'}]
+          </span>
+        </span>
+      </div>
+
+      {/* ── Panel content (hidden when minimized) ── */}
+      {!panel.minimized && (
+        <div
+          data-no-drag
+          style={{
+            padding: 12,
+            overflowY: 'auto',
+            height: isMax ? `calc(100% - 28px)` : panel.height - 28,
+            color: T.green,
+            fontSize: 12,
+          }}
+        >
+          {children}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// COMPONENT: GlobalHeader — fixed top bar with clock
+// ─────────────────────────────────────────────────────────────────────────────
+
+function GlobalHeader({ autoRefresh }) {
+  const [time, setTime] = React.useState('');
+  React.useEffect(() => {
+    const update = () => setTime(new Date().toUTCString().slice(17, 25));
+    update();
+    const id = setInterval(update, 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  return (
+    <div style={{
+      position: 'fixed', top: 0, left: 0, right: 0, height: HEADER_H,
+      zIndex: 9999, background: T.bg,
+      borderBottom: `1px solid ${T.green}`,
+      fontFamily: T.font, display: 'flex', flexDirection: 'column',
+      justifyContent: 'center', padding: '0 20px',
+    }}>
+      <div style={{ color: T.green, fontSize: 13, letterSpacing: '0.1em' }}>
+        ╔{'═'.repeat(60)}╗
+      </div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <span style={{ color: T.green, fontSize: 13, fontWeight: 'bold', letterSpacing: '0.08em' }}>
+          ██ AI INVESTMENT TERMINAL v2.0
+        </span>
+        <span style={{ color: T.greenMid, fontSize: 11, display: 'flex', gap: 16 }}>
+          {autoRefresh && <span style={{ color: T.yellow }}>● AUTO-REFRESH ON</span>}
+          <span>{time} UTC</span>
+        </span>
+      </div>
+      <div style={{ color: T.greenMid, fontSize: 10, letterSpacing: '0.06em' }}>
+        ╚═ MULTI-AGENT SYSTEM · CLAUDE SONNET · 4 SPECIALISTS ═╝
+      </div>
+    </div>
+  );
+}
+
+function MobileFallback() {
+  return (
+    <div style={{
+      background: T.bg, color: T.green, fontFamily: T.font,
+      minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center',
+      flexDirection: 'column', gap: 8, fontSize: 13,
+    }}>
+      <div>╔{'═'.repeat(30)}╗</div>
+      <div>║{'  '}TERMINAL MODE{'          '}║</div>
+      <div>║{'  '}Requires desktop browser{'  '}║</div>
+      <div>║{'  '}min-width: 900px{'         '}║</div>
+      <div>╚{'═'.repeat(30)}╝</div>
+    </div>
+  );
+}
+
