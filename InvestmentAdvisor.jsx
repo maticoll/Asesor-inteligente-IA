@@ -373,19 +373,19 @@ Responde ÚNICAMENTE con JSON válido (sin markdown, sin texto antes/después) c
 // ═══════════════════════════════════════════════════════════════════════════════
 
 const T = {
-  bg:       '#000000',
-  bgPanel:  '#050f05',
-  bgHeader: '#001a00',
-  green:    '#00ff41',
-  greenMid: '#00cc33',
-  greenDark:'#003311',
-  greenGlow:'rgba(0,255,65,0.12)',
-  red:      '#ff3333',
-  yellow:   '#ffcc00',
+  bg:       '#f8fafc',
+  bgPanel:  '#ffffff',
+  bgHeader: '#1e3a8a',
+  green:    '#1e40af',
+  greenMid: '#64748b',
+  greenDark:'#e2e8f0',
+  greenGlow:'rgba(30,64,175,0.1)',
+  red:      '#dc2626',
+  yellow:   '#d97706',
   font:     "'Courier New', Courier, monospace",
 };
 
-const SCANLINES = 'repeating-linear-gradient(transparent 0px, transparent 3px, rgba(0,255,65,0.025) 3px, rgba(0,255,65,0.025) 4px)';
+const SCANLINES = 'none';
 
 const HEADER_H = 70; // px — height of fixed global header
 
@@ -518,10 +518,10 @@ function TerminalPanel({ panel, title, onMouseDown, onMinimize, onMaximize, chil
           height: 28,
         }}
       >
-        <span style={{ color: T.green, fontSize: 11, letterSpacing: '0.05em' }}>
+        <span style={{ color: '#ffffff', fontSize: 11, letterSpacing: '0.05em' }}>
           ─ {title} ─
         </span>
-        <span data-no-drag style={{ color: T.greenMid, fontSize: 11, display: 'flex', gap: 10 }}>
+        <span data-no-drag style={{ color: 'rgba(255,255,255,0.7)', fontSize: 11, display: 'flex', gap: 10 }}>
           <span
             onClick={onMinimize}
             style={{ cursor: 'pointer', padding: '0 2px' }}
@@ -575,23 +575,23 @@ function GlobalHeader({ autoRefresh }) {
     <div style={{
       position: 'fixed', top: 0, left: 0, right: 0, height: HEADER_H,
       zIndex: 9999, background: T.bg,
-      borderBottom: `1px solid ${T.green}`,
+      borderBottom: `1px solid rgba(255,255,255,0.2)`,
       fontFamily: T.font, display: 'flex', flexDirection: 'column',
       justifyContent: 'center', padding: '0 20px',
     }}>
-      <div style={{ color: T.green, fontSize: 13, letterSpacing: '0.1em' }}>
+      <div style={{ color: 'rgba(255,255,255,0.4)', fontSize: 13, letterSpacing: '0.1em' }}>
         ╔{'═'.repeat(60)}╗
       </div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <span style={{ color: T.green, fontSize: 13, fontWeight: 'bold', letterSpacing: '0.08em' }}>
+        <span style={{ color: '#ffffff', fontSize: 13, fontWeight: 'bold', letterSpacing: '0.08em' }}>
           ██ AI INVESTMENT TERMINAL v2.0
         </span>
-        <span style={{ color: T.greenMid, fontSize: 11, display: 'flex', gap: 16 }}>
+        <span style={{ color: 'rgba(255,255,255,0.75)', fontSize: 11, display: 'flex', gap: 16 }}>
           {autoRefresh && <span style={{ color: T.yellow }}>● AUTO-REFRESH ON</span>}
           <span>{time} UTC</span>
         </span>
       </div>
-      <div style={{ color: T.greenMid, fontSize: 10, letterSpacing: '0.06em' }}>
+      <div style={{ color: 'rgba(255,255,255,0.55)', fontSize: 10, letterSpacing: '0.06em' }}>
         ╚═ MULTI-AGENT SYSTEM · CLAUDE SONNET · 4 SPECIALISTS ═╝
       </div>
     </div>
