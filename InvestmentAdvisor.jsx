@@ -663,7 +663,7 @@ function MobileFallback() {
       minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center',
       flexDirection: 'column', gap: 8, fontSize: 13,
     }}>
-      <div>╔{'═'.repeat(30)}╗</div>
+      <div>╔{'═'.repeat(27)}╗</div>
       <div>║{'  '}TERMINAL MODE{'          '}║</div>
       <div>║{'  '}Requires desktop browser{'  '}║</div>
       <div>║{'  '}min-width: 900px{'         '}║</div>
