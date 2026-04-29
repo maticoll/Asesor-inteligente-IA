@@ -417,6 +417,24 @@ const BATCH_SIZE = 5;
 const REFRESH_INTERVAL_SECS = 15 * 60;
 const DEFAULT_WATCHLIST = ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'NVDA'];
 
+const PRESET_LISTS = {
+  'DOW 30': [
+    'AAPL','AMGN','AXP','BA','CAT','CRM','CSCO','CVX','DIS','DOW',
+    'GS','HD','HON','IBM','JNJ','JPM','KO','MCD','MMM','MRK',
+    'MSFT','NKE','PG','TRV','UNH','V','VZ','WMT','AMZN','NVDA',
+  ],
+  'NASDAQ 30': [
+    'AAPL','MSFT','NVDA','AMZN','META','GOOGL','TSLA','AVGO','COST','NFLX',
+    'AMD','ADBE','QCOM','INTC','CSCO','INTU','CMCSA','PEP','AMGN','TMUS',
+    'TXN','HON','AMAT','SBUX','REGN','VRTX','GILD','MU','LRCX','KLAC',
+  ],
+  'S&P TOP 30': [
+    'UNH','JNJ','XOM','JPM','V','MA','PG','HD','LLY','ABBV',
+    'PFE','BAC','KO','MRK','CVX','WMT','TMO','ACN','ABT','MDT',
+    'CAT','LOW','GE','NEE','AXP','PM','BMY','ORCL','PYPL','SO',
+  ],
+};
+
 const bar = (pct) => {
   const filled = Math.round(Math.min(100, Math.max(0, pct)) / 10);
   return '█'.repeat(filled) + '░'.repeat(10 - filled);
@@ -737,11 +755,51 @@ function WatchlistPanel({ watchlist, setWatchlist, isRunning, onAnalyzeAll, batc
 
   const removeTicker = (t) => setWatchlist(prev => prev.filter(x => x !== t));
 
+  const loadPreset = (name) => {
+    const tickers = PRESET_LISTS[name];
+    if (!tickers) return;
+    setWatchlist(tickers.slice(0, 100));
+  };
+
   const readyCount = watchlist.filter(t => assetData[t]?.status === 'ready').length;
   const errorCount = watchlist.filter(t => assetData[t]?.status === 'error').length;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      {/* Preset lists */}
+      <div>
+        <div style={{ color: T.greenMid, fontSize: 10, letterSpacing: '0.08em', marginBottom: 5 }}>
+          ─ LISTAS PREDEFINIDAS ─
+        </div>
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+          {Object.entries(PRESET_LISTS).map(([name, tickers]) => (
+            <button
+              key={name}
+              data-no-drag
+              onClick={() => loadPreset(name)}
+              disabled={isRunning}
+              title={`Cargar ${tickers.length} activos: ${tickers.slice(0, 5).join(', ')}...`}
+              style={{
+                background: T.bg,
+                color: T.green,
+                border: `1px solid ${T.greenDark}`,
+                fontFamily: T.font,
+                fontSize: 10,
+                padding: '3px 9px',
+                cursor: isRunning ? 'not-allowed' : 'pointer',
+                letterSpacing: '0.05em',
+                opacity: isRunning ? 0.5 : 1,
+                transition: 'border-color 0.15s',
+              }}
+              onMouseEnter={e => { if (!isRunning) e.target.style.borderColor = T.green; }}
+              onMouseLeave={e => { e.target.style.borderColor = T.greenDark; }}
+            >
+              {name} <span style={{ color: T.greenMid }}>({tickers.length})</span>
+            </button>
+          ))}
+        </div>
+      </div>
+
       {/* Add ticker input */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         <span style={{ color: T.greenMid, fontSize: 14 }}>{'>'}</span>
@@ -1668,72 +1726,4 @@ export default function InvestmentAdvisor() {
   const selectedAssetEntry = selectedAsset ? assetData[selectedAsset] : null;
   const selectedTech       = selectedAssetEntry?.tech;
 
-  // ── Render ─────────────────────────────────────────────────────────────────
-  if (isMobile) return <MobileFallback />;
-
-  return (
-    <div style={{
-      background: T.bg,
-      backgroundImage: SCANLINES,
-      minHeight: '100vh',
-      fontFamily: T.font,
-      position: 'relative',
-      overflow: 'hidden',
-    }}>
-      <GlobalHeader
-        autoRefresh={autoRefresh}
-        onToggleAutoRefresh={() => setAutoRefresh(v => !v)}
-        countdown={countdown}
-        batchProgress={batchProgress}
-      />
-
-      <div style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}>
-
-        <TerminalPanel {...panelProps('syscfg')} title="[SYS.CFG] INVESTOR PROFILE">
-          <SysCfgPanel profile={profile} setProfile={setProfile} />
-        </TerminalPanel>
-
-        <TerminalPanel {...panelProps('mktin')} title="[MKT.IN] WATCHLIST">
-          <WatchlistPanel
-            watchlist={watchlist}
-            setWatchlist={setWatchlist}
-            isRunning={batchProgress.running}
-            onAnalyzeAll={() => analyzeAll(watchlist, profile)}
-            batchProgress={batchProgress}
-            assetData={assetData}
-          />
-        </TerminalPanel>
-
-        <TerminalPanel {...panelProps('prcdat')} title={`[PRC.DAT] ${selectedAsset || 'PRICE DATA'}`}>
-          <PrcDatPanel tech={selectedTech} ticker={selectedAsset || ''} />
-        </TerminalPanel>
-
-        <TerminalPanel {...panelProps('anlytcs')} title="[ANLYTCS] MULTI-ASSET TABLE">
-          <MultiAssetTable
-            assetData={assetData}
-            watchlist={watchlist}
-            profile={profile}
-            selectedAsset={selectedAsset}
-            onSelectAsset={setSelectedAsset}
-          />
-        </TerminalPanel>
-
-        <TerminalPanel {...panelProps('sigout')} title={`[SIG.OUT] ${selectedAsset ? `SIGNAL — ${selectedAsset}` : 'SIGNAL OUTPUT'}`}>
-          <SigOutPanel
-            assetEntry={selectedAssetEntry}
-            profile={profile}
-          />
-        </TerminalPanel>
-
-        <TerminalPanel {...panelProps('prtsum')} title="[PRT.SUM] PORTFOLIO SUMMARY">
-          <PortfolioSummaryPanel
-            assetData={assetData}
-            watchlist={watchlist}
-            profile={profile}
-          />
-        </TerminalPanel>
-
-      </div>
-    </div>
-  );
-}
+  // ── Render ───────────────────────────────────────────────────────────────
