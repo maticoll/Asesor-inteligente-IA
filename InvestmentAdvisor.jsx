@@ -97,12 +97,8 @@ const calcVolatility30d = (prices) => {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 const runTechnicalAgent = async (ticker, onStatus) => {
-  const ENV = window.ENV || {};
-  const proxy = ENV.YAHOO_FINANCE_PROXY;
-  if (!proxy) throw new Error('YAHOO_FINANCE_PROXY no configurado en window.ENV');
-
   onStatus('fetching');
-  const url = `${proxy}/v8/finance/chart/${ticker}?range=1y&interval=1d`;
+  const url = `/api/yahoo/v8/finance/chart/${ticker}?range=1y&interval=1d`;
   const res = await fetch(url, { headers: { Accept: 'application/json' } });
   if (!res.ok) throw new Error(`Yahoo Finance respondió ${res.status} para ${ticker}`);
 
@@ -618,7 +614,7 @@ function MobileFallback() {
 // PANEL: [SYS.CFG] — Investor Profile config
 // ─────────────────────────────────────────────────────────────────────────────
 
-function SysCfgPanel({ profile, setProfile, autoRefresh, setAutoRefresh }) {
+function SysCfgPanel({ profile, setProfile }) {
   const inputStyle = {
     background: T.bg, color: T.green, border: `1px solid ${T.greenDark}`,
     fontFamily: T.font, fontSize: 12, padding: '3px 6px', width: '100%',
@@ -683,17 +679,6 @@ function SysCfgPanel({ profile, setProfile, autoRefresh, setAutoRefresh }) {
         />
       </div>
 
-      <div
-        onClick={() => setAutoRefresh(v => !v)}
-        style={{ cursor: 'pointer', borderTop: `1px solid ${T.greenDark}`, paddingTop: 10 }}
-      >
-        <label style={{ ...labelStyle, cursor: 'pointer' }}>AUTO-REFRESH (15 min)</label>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12 }}>
-          <span style={{ color: autoRefresh ? T.greenDark : T.green }}>[OFF]</span>
-          <span style={{ color: T.greenMid }}>{autoRefresh ? '●───' : '───●'}</span>
-          <span style={{ color: autoRefresh ? T.green : T.greenDark }}>[ON]</span>
-        </div>
-      </div>
     </div>
   );
 }
@@ -702,7 +687,7 @@ function SysCfgPanel({ profile, setProfile, autoRefresh, setAutoRefresh }) {
 // PANEL: [MKT.IN] — Ticker input + 4 agent status cards
 // ─────────────────────────────────────────────────────────────────────────────
 
-function MktInPanel({ ticker, setTicker, isAnalyzing, onAnalyze, agentStates, agentResults, errors }) {
+function MktInPanel({ ticker, setTicker, isAnalyzing, onAnalyze, agentStates, agentResults, errors, autoRefresh, setAutoRefresh }) {
   const dots = useDots(isAnalyzing);
   const agents = [
     { key: 'technical',    label: 'AGENT 01 · TECHNICAL   ' },
@@ -752,6 +737,19 @@ function MktInPanel({ ticker, setTicker, isAnalyzing, onAnalyze, agentStates, ag
 
       {/* Divider */}
       <div style={{ borderTop: `1px solid ${T.greenDark}` }} />
+
+      {/* Auto-refresh toggle */}
+      <div
+        onClick={() => setAutoRefresh(v => !v)}
+        style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}
+      >
+        <span style={{ color: T.greenMid, fontSize: 11, letterSpacing: '0.08em' }}>AUTO-REFRESH (15 min)</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11 }}>
+          <span style={{ color: autoRefresh ? T.greenDark : T.green }}>[OFF]</span>
+          <span style={{ color: T.greenMid }}>{autoRefresh ? '●───' : '───●'}</span>
+          <span style={{ color: autoRefresh ? T.green : T.greenDark }}>[ON]</span>
+        </div>
+      </div>
 
       {/* Agent status rows */}
       {agents.map(({ key, label }) => {
@@ -1257,30 +1255,30 @@ export default function InvestmentAdvisor() {
       {/* Canvas for draggable panels */}
       <div style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}>
 
-        <TerminalPanel {...panelProps('syscfg')} title="[SYS.CFG] INVESTOR PROFILE">
+        <TerminalPanel {...panelProps('syscfg')} title="INVESTOR PROFILE">
           <SysCfgPanel
             profile={profile} setProfile={setProfile}
-            autoRefresh={autoRefresh} setAutoRefresh={setAutoRefresh}
           />
         </TerminalPanel>
 
-        <TerminalPanel {...panelProps('mktin')} title="[MKT.IN] MARKET INPUT">
+        <TerminalPanel {...panelProps('mktin')} title="MARKET INPUT">
           <MktInPanel
             ticker={ticker} setTicker={setTicker}
             isAnalyzing={isAnalyzing} onAnalyze={runAnalysis}
             agentStates={agentStates} agentResults={agentResults} errors={errors}
+            autoRefresh={autoRefresh} setAutoRefresh={setAutoRefresh}
           />
         </TerminalPanel>
 
-        <TerminalPanel {...panelProps('prcdat')} title="[PRC.DAT] PRICE DATA">
+        <TerminalPanel {...panelProps('prcdat')} title="PRICE DATA">
           <PrcDatPanel tech={tech} ticker={ticker.toUpperCase()} />
         </TerminalPanel>
 
-        <TerminalPanel {...panelProps('anlytcs')} title="[ANLYTCS] ANALYTICS">
+        <TerminalPanel {...panelProps('anlytcs')} title="ANALYTICS">
           <AnalyticsPanel tech={tech} fund={fund} risk={risk} />
         </TerminalPanel>
 
-        <TerminalPanel {...panelProps('sigout')} title="[SIG.OUT] SIGNAL OUTPUT">
+        <TerminalPanel {...panelProps('sigout')} title="SIGNAL OUTPUT">
           <SigOutPanel
             orch={orch} tech={tech} fund={fund} risk={risk}
             profile={profile} errors={errors}
