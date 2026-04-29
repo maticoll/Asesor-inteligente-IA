@@ -1,12 +1,7 @@
 /**
  * InvestmentAdvisor.jsx
  * MVP production-ready · Plataforma multi-agente de asesoría de inversiones
- *
- * Requiere:
- *   - React 18+
- *   - recharts
- *   - Tailwind CSS (clases core)
- *   - window.ENV con { ANTHROPIC_API_KEY, ALPHA_VANTAGE_API_KEY, YAHOO_FINANCE_PROXY }
+ * v3.0 — Multi-Asset Watchlist Dashboard
  */
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
@@ -22,7 +17,6 @@ import {
 // UTILIDADES MATEMÁTICO-FINANCIERAS
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/** Serie de EMA de longitud completa */
 const calcEMASeries = (prices, period) => {
   const k = 2 / (period + 1);
   const out = [prices[0]];
@@ -32,7 +26,6 @@ const calcEMASeries = (prices, period) => {
   return out;
 };
 
-/** RSI de Wilder (período = 14 por defecto) */
 const calcRSI = (prices, period = 14) => {
   if (prices.length < period + 1) return 50;
   let avgGain = 0;
@@ -53,13 +46,11 @@ const calcRSI = (prices, period = 14) => {
   return 100 - 100 / (1 + avgGain / avgLoss);
 };
 
-/** SMA de los últimos `period` precios */
 const calcSMA = (prices, period) => {
   const slice = prices.slice(-period);
   return slice.reduce((a, b) => a + b, 0) / slice.length;
 };
 
-/** MACD(12,26,9) — devuelve { macd, signal, histogram, bullish } */
 const calcMACD = (prices) => {
   if (prices.length < 35) return { macd: 0, signal: 0, histogram: 0, bullish: false };
   const ema12 = calcEMASeries(prices, 12);
@@ -74,11 +65,10 @@ const calcMACD = (prices) => {
     macd: lastM,
     signal: lastS,
     histogram: lastM - lastS,
-    bullish: lastM > lastS && prevM <= prevS, // cruce alcista
+    bullish: lastM > lastS && prevM <= prevS,
   };
 };
 
-/** Volatilidad anualizada de los últimos 30 días (log-returns) */
 const calcVolatility30d = (prices) => {
   const p = prices.slice(-31);
   if (p.length < 2) return 0.25;
@@ -117,10 +107,10 @@ const runTechnicalAgent = async (ticker, onStatus) => {
 
   onStatus('analyzing');
 
-  const rsi     = calcRSI(closes);
+  const rsi      = calcRSI(closes);
   const macdData = calcMACD(closes);
-  const sma50   = calcSMA(closes, 50);
-  const sma200  = calcSMA(closes, Math.min(200, closes.length));
+  const sma50    = calcSMA(closes, 50);
+  const sma200   = calcSMA(closes, Math.min(200, closes.length));
   const resistance = highs.length > 0 ? Math.max(...highs.slice(-52)) : currentPrice * 1.1;
 
   let signal, confidence, justification;
@@ -160,7 +150,7 @@ const runTechnicalAgent = async (ticker, onStatus) => {
     sma200: +sma200.toFixed(2),
     currentPrice: +currentPrice.toFixed(2),
     priceHistory,
-    closes, // requerido por Agente 3
+    closes,
     justification,
   };
 };
@@ -174,7 +164,6 @@ const runFundamentalAgent = async (ticker, onStatus) => {
   const apiKey = ENV.ALPHA_VANTAGE_API_KEY;
 
   onStatus('fetching');
-  // Si hay key en window.ENV → llamada directa; si no → proxy server-side (Vercel)
   const url = apiKey
     ? `https://www.alphavantage.co/query?function=OVERVIEW&symbol=${ticker}&apikey=${apiKey}`
     : `/api/alpha?function=OVERVIEW&symbol=${ticker}`;
@@ -198,10 +187,10 @@ const runFundamentalAgent = async (ticker, onStatus) => {
   const roe         = fv('ReturnOnEquityTTM') * 100;
   const peg         = fv('PEGRatio');
   const payoutRatio = fv('PayoutRatio') * 100;
-  const fcf         = fv('OperatingCashflowTTM'); // mejor proxy de FCF en OVERVIEW
+  const fcf         = fv('OperatingCashflowTTM');
   const epsGrowth   = fv('QuarterlyEarningsGrowthYOY') * 100;
   const beta        = fv('Beta', 1.0);
-  const sectorPE    = 20; // promedio de mercado como proxy del sector
+  const sectorPE    = 20;
 
   let qualityScore = 0;
   const breakdown = [];
@@ -213,7 +202,7 @@ const runFundamentalAgent = async (ticker, onStatus) => {
     qualityScore += 20;
     breakdown.push(`P/E ${pe.toFixed(1)}<sector·0.9 y PEG ${peg.toFixed(2)}<1 (+20)`);
   }
-  if (epsGrowth > 10)                       { qualityScore += 15; breakdown.push(`EPS growth ${epsGrowth.toFixed(1)}%>10% (+15)`); }
+  if (epsGrowth > 10) { qualityScore += 15; breakdown.push(`EPS growth ${epsGrowth.toFixed(1)}%>10% (+15)`); }
 
   let signal, confidence, valuation;
   if (qualityScore > 70)      { signal = 'buy';  confidence = 80; valuation = 'undervalued'; }
@@ -225,14 +214,15 @@ const runFundamentalAgent = async (ticker, onStatus) => {
   return {
     signal,
     confidence,
-    pe:           +pe.toFixed(2),
-    roe:          +roe.toFixed(2),
-    peg:          +peg.toFixed(2),
-    beta:         +beta.toFixed(2),
-    payout_ratio: +payoutRatio.toFixed(2),
-    eps_growth:   +epsGrowth.toFixed(2),
+    pe:            +pe.toFixed(2),
+    roe:           +roe.toFixed(2),
+    peg:           +peg.toFixed(2),
+    beta:          +beta.toFixed(2),
+    payout_ratio:  +payoutRatio.toFixed(2),
+    eps_growth:    +epsGrowth.toFixed(2),
     quality_score: qualityScore,
     valuation,
+    sector:        data.Sector || '',
     justification,
   };
 };
@@ -245,11 +235,11 @@ const runRiskAgent = (techResult, fundResult, profile) => {
   const closes       = techResult?.closes       || [];
   const currentPrice = techResult?.currentPrice || 0;
   const beta         = fundResult?.beta         || 1.0;
-  const correlation  = 0.5; // default estático
+  const correlation  = 0.5;
 
-  const vol     = calcVolatility30d(closes); // anualizada
+  const vol      = calcVolatility30d(closes);
   const dailyVol = vol / Math.sqrt(252);
-  const var95   = dailyVol * 1.645 * currentPrice;
+  const var95    = dailyVol * 1.645 * currentPrice;
 
   const baseWeights = { conservative: 5, moderate: 8, aggressive: 12 };
   let maxWeight = baseWeights[profile.risk_profile] || 8;
@@ -278,33 +268,30 @@ const runRiskAgent = (techResult, fundResult, profile) => {
 const runOrchestratorAgent = async (tech, fund, risk, profile, onStatus) => {
   const ENV = window.ENV || {};
   const apiKey = ENV.ANTHROPIC_API_KEY;
-  // Si hay key en window.ENV → llamada directa con header de browser-access
-  // Si no → proxy server-side /api/claude (Vercel, key guardada en env vars)
   const useProxy = !apiKey;
 
   onStatus('analyzing');
 
-  // Excluir el array closes para no inflar el payload
   const techSummary = tech ? { ...tech, closes: undefined, priceHistory: undefined } : tech;
 
   const payload = {
-    technical_analysis:  techSummary,
+    technical_analysis:   techSummary,
     fundamental_analysis: fund,
-    risk_management:     risk,
+    risk_management:      risk,
     investor_profile: {
-      capital:            profile.capital,
-      risk_profile:       profile.risk_profile,
-      time_horizon:       profile.time_horizon,
-      preferred_sectors:  profile.preferred_sectors,
+      capital:           profile.capital,
+      risk_profile:      profile.risk_profile,
+      time_horizon:      profile.time_horizon,
+      preferred_sectors: profile.preferred_sectors,
     },
   };
 
   const systemPrompt = `Eres un orquestador financiero experto. Dados los análisis de tres agentes especialistas y el perfil del inversor:
 1. Detecta contradicciones entre señales de los agentes
 2. Asigna pesos según horizonte temporal:
-   - Horizonte mediano (medium): fundamental 50%, técnico 30%, riesgo 20%
-   - Horizonte corto (short): técnico 50%, fundamental 30%, riesgo 20%
-   - Horizonte largo (long): fundamental 60%, riesgo 25%, técnico 15%
+   - Horizonte corto (short, <3 meses): técnico 60%, fundamental 20%, riesgo 20%
+   - Horizonte mediano (medium, 3-12 meses): técnico 30%, fundamental 50%, riesgo 20%
+   - Horizonte largo (long, 1-3 años): técnico 10%, fundamental 70%, riesgo 20%
 3. Calcula score de confianza ponderado
 4. Genera recomendación accionable
 
@@ -319,6 +306,14 @@ Responde ÚNICAMENTE con JSON válido (sin markdown, sin texto antes/después) c
   "contradiction_detected": <boolean: true si agentes tienen señales opuestas>,
   "justification_multicriteria": "<string: síntesis integrada en 2-3 oraciones con los factores clave>"
 }`;
+
+  const sanitize = (v) => {
+    if (typeof v === 'string') return v.replace(/[\uD800-\uDFFF]/g, '');
+    if (Array.isArray(v))      return v.map(sanitize);
+    if (v && typeof v === 'object')
+      return Object.fromEntries(Object.entries(v).map(([k, val]) => [k, sanitize(val)]));
+    return v;
+  };
 
   const claudeEndpoint = useProxy
     ? '/api/claude'
@@ -342,7 +337,7 @@ Responde ÚNICAMENTE con JSON válido (sin markdown, sin texto antes/después) c
       system:     systemPrompt,
       messages: [{
         role:    'user',
-        content: `Genera la recomendación de inversión con estos datos:\n\n${JSON.stringify(payload, null, 2)}`,
+        content: `Genera la recomendación de inversión con estos datos:\n\n${JSON.stringify(sanitize(payload), null, 2)}`,
       }],
     }),
   });
@@ -365,7 +360,42 @@ Responde ÚNICAMENTE con JSON válido (sin markdown, sin texto antes/después) c
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// DESIGN TOKENS — v2.0 Bloomberg Terminal
+// HELPER: computeHorizonLocally — cálculo local de horizonte sin LLM
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const HORIZON_WEIGHTS = {
+  short:  { technical: 0.60, fundamental: 0.20, risk: 0.20 },
+  medium: { technical: 0.30, fundamental: 0.50, risk: 0.20 },
+  long:   { technical: 0.10, fundamental: 0.70, risk: 0.20 },
+};
+
+const computeHorizonLocally = (tech, fund, risk, horizon) => {
+  const w = HORIZON_WEIGHTS[horizon] || HORIZON_WEIGHTS.medium;
+  const signalVal = (s) => s === 'buy' ? 1 : s === 'sell' ? -1 : 0;
+  const techVal = tech ? signalVal(tech.signal) * ((tech.confidence || 50) / 100) : 0;
+  const fundVal = fund ? signalVal(fund.signal) * ((fund.confidence || 50) / 100) : 0;
+  const riskVal = risk ? (risk.risk_level === 'low' ? 0.2 : risk.risk_level === 'high' ? -0.2 : 0) : 0;
+  const weighted = techVal * w.technical + fundVal * w.fundamental + riskVal * w.risk;
+  const final_action = weighted > 0.08 ? 'buy' : weighted < -0.08 ? 'sell' : 'hold';
+  const confidence_score = Math.round(Math.min(92, Math.max(30, Math.abs(weighted) * 80 + 35)));
+  const price = tech?.currentPrice || 0;
+  return {
+    final_action,
+    confidence_score,
+    portfolio_weight: risk?.max_weight || 8,
+    time_horizon: horizon,
+    price_target: price > 0 ? +(price * (1 + weighted * 0.12)).toFixed(2) : null,
+    stop_loss: price > 0 ? +(price * (1 - 0.05 - Math.abs(weighted) * 0.03)).toFixed(2) : null,
+    contradiction_detected: tech && fund
+      ? (tech.signal !== fund.signal && tech.signal !== 'hold' && fund.signal !== 'hold')
+      : false,
+    justification_multicriteria: `Horizonte ${horizon.toUpperCase()}: técnico ${(w.technical * 100).toFixed(0)}%, fundamental ${(w.fundamental * 100).toFixed(0)}%, riesgo ${(w.risk * 100).toFixed(0)}%. Score ponderado: ${weighted.toFixed(2)}.`,
+    _local: true,
+  };
+};
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// DESIGN TOKENS
 // ═══════════════════════════════════════════════════════════════════════════════
 
 const T = {
@@ -382,23 +412,22 @@ const T = {
 };
 
 const SCANLINES = 'none';
+const HEADER_H = 70;
+const BATCH_SIZE = 5;
+const REFRESH_INTERVAL_SECS = 15 * 60;
+const DEFAULT_WATCHLIST = ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'NVDA'];
 
-const HEADER_H = 70; // px — height of fixed global header
-
-/** ASCII progress bar: 10 chars, filled █ vs empty ░ */
 const bar = (pct) => {
   const filled = Math.round(Math.min(100, Math.max(0, pct)) / 10);
   return '█'.repeat(filled) + '░'.repeat(10 - filled);
 };
 
-/** Dot-leader row for monospace column alignment */
 const row = (label, value, width = 22) => {
   const v = String(value);
   const dots = '.'.repeat(Math.max(1, width - label.length - v.length));
   return `${label}${dots}${v}`;
 };
 
-/** Status badge config */
 const BADGE = {
   idle:      { text: '[IDLE ]', color: T.greenDark,  pulse: false },
   waiting:   { text: '[WAIT ]', color: T.greenMid,   pulse: false },
@@ -408,19 +437,17 @@ const BADGE = {
   error:     { text: '[ERR! ]', color: T.red,         pulse: false },
 };
 
-/** Stage → progress % for agent pipeline */
 const STAGE_PCT = { idle: 0, waiting: 10, fetching: 40, analyzing: 70, ready: 100, error: 100 };
 
-/** Initial positions for 5 panels */
 const INITIAL_PANELS = [
-  { id: 'syscfg',  x: 20,  y: HEADER_H + 10, width: 340, height: 380, zIndex: 1, minimized: false, maximized: false },
-  { id: 'mktin',   x: 380, y: HEADER_H + 10, width: 380, height: 400, zIndex: 2, minimized: false, maximized: false },
-  { id: 'prcdat',  x: 780, y: HEADER_H + 10, width: 420, height: 300, zIndex: 3, minimized: false, maximized: false },
-  { id: 'anlytcs', x: 20,  y: HEADER_H + 420, width: 560, height: 320, zIndex: 4, minimized: false, maximized: false },
-  { id: 'sigout',  x: 600, y: HEADER_H + 340, width: 610, height: 460, zIndex: 5, minimized: false, maximized: false },
+  { id: 'syscfg',  x: 20,   y: HEADER_H + 10,  width: 340,  height: 380, zIndex: 1, minimized: false, maximized: false },
+  { id: 'mktin',   x: 380,  y: HEADER_H + 10,  width: 420,  height: 420, zIndex: 2, minimized: false, maximized: false },
+  { id: 'prcdat',  x: 820,  y: HEADER_H + 10,  width: 400,  height: 300, zIndex: 3, minimized: false, maximized: false },
+  { id: 'anlytcs', x: 20,   y: HEADER_H + 430, width: 1200, height: 360, zIndex: 4, minimized: false, maximized: false },
+  { id: 'sigout',  x: 20,   y: HEADER_H + 810, width: 560,  height: 460, zIndex: 5, minimized: false, maximized: false },
+  { id: 'prtsum',  x: 600,  y: HEADER_H + 810, width: 620,  height: 460, zIndex: 6, minimized: false, maximized: false },
 ];
 
-/** Animates "." ".." "..." cycling every 400ms — used in agent status display */
 function useDots(active) {
   const [dots, setDots] = React.useState('.');
   React.useEffect(() => {
@@ -432,7 +459,7 @@ function useDots(active) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// HOOK: usePanels — drag, minimize, maximize state for all 5 panels
+// HOOK: usePanels
 // ─────────────────────────────────────────────────────────────────────────────
 
 function usePanels() {
@@ -482,7 +509,7 @@ function usePanels() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// COMPONENT: TerminalPanel — draggable panel shell used by all 5 panels
+// COMPONENT: TerminalPanel
 // ─────────────────────────────────────────────────────────────────────────────
 
 function TerminalPanel({ panel, title, onMouseDown, onMinimize, onMaximize, children }) {
@@ -499,7 +526,6 @@ function TerminalPanel({ panel, title, onMouseDown, onMinimize, onMaximize, chil
       boxShadow: `0 0 14px ${T.greenGlow}, 0 0 1px ${T.greenDark}`,
       fontFamily: T.font,
     }}>
-      {/* ── Title bar (drag handle) ── */}
       <div
         onMouseDown={(e) => !isMax && onMouseDown(panel.id, e)}
         style={{
@@ -518,35 +544,24 @@ function TerminalPanel({ panel, title, onMouseDown, onMinimize, onMaximize, chil
           ─ {title} ─
         </span>
         <span data-no-drag style={{ color: 'rgba(255,255,255,0.7)', fontSize: 11, display: 'flex', gap: 10 }}>
-          <span
-            onClick={onMinimize}
-            style={{ cursor: 'pointer', padding: '0 2px' }}
-            title={panel.minimized ? 'Restore' : 'Minimize'}
-          >
+          <span onClick={onMinimize} style={{ cursor: 'pointer', padding: '0 2px' }}
+            title={panel.minimized ? 'Restore' : 'Minimize'}>
             [{panel.minimized ? '+' : '−'}]
           </span>
-          <span
-            onClick={onMaximize}
-            style={{ cursor: 'pointer', padding: '0 2px' }}
-            title={isMax ? 'Restore' : 'Maximize'}
-          >
+          <span onClick={onMaximize} style={{ cursor: 'pointer', padding: '0 2px' }}
+            title={isMax ? 'Restore' : 'Maximize'}>
             [{isMax ? '▣' : '□'}]
           </span>
         </span>
       </div>
-
-      {/* ── Panel content (hidden when minimized) ── */}
       {!panel.minimized && (
-        <div
-          data-no-drag
-          style={{
-            padding: 12,
-            overflowY: 'auto',
-            height: isMax ? `calc(100% - 28px)` : panel.height - 28,
-            color: T.green,
-            fontSize: 12,
-          }}
-        >
+        <div data-no-drag style={{
+          padding: 12,
+          overflowY: 'auto',
+          height: isMax ? `calc(100% - 28px)` : panel.height - 28,
+          color: T.green,
+          fontSize: 12,
+        }}>
           {children}
         </div>
       )}
@@ -555,10 +570,10 @@ function TerminalPanel({ panel, title, onMouseDown, onMinimize, onMaximize, chil
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// COMPONENT: GlobalHeader — fixed top bar with clock
+// COMPONENT: GlobalHeader — con auto-refresh toggle y countdown
 // ─────────────────────────────────────────────────────────────────────────────
 
-function GlobalHeader({ autoRefresh }) {
+function GlobalHeader({ autoRefresh, onToggleAutoRefresh, countdown, batchProgress }) {
   const [time, setTime] = React.useState('');
   React.useEffect(() => {
     const update = () => setTime(new Date().toUTCString().slice(17, 25));
@@ -566,6 +581,12 @@ function GlobalHeader({ autoRefresh }) {
     const id = setInterval(update, 1000);
     return () => clearInterval(id);
   }, []);
+
+  const formatCountdown = (secs) => {
+    const m = Math.floor(secs / 60).toString().padStart(2, '0');
+    const s = (secs % 60).toString().padStart(2, '0');
+    return `${m}:${s}`;
+  };
 
   return (
     <div style={{
@@ -580,15 +601,38 @@ function GlobalHeader({ autoRefresh }) {
       </div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <span style={{ color: '#ffffff', fontSize: 13, fontWeight: 'bold', letterSpacing: '0.08em' }}>
-          ██ AI INVESTMENT TERMINAL v2.0
+          ██ AI INVESTMENT TERMINAL v3.0
         </span>
-        <span style={{ color: 'rgba(255,255,255,0.75)', fontSize: 11, display: 'flex', gap: 16 }}>
-          {autoRefresh && <span style={{ color: T.yellow }}>● AUTO-REFRESH ON</span>}
-          <span>{time} UTC</span>
+        <span style={{ color: 'rgba(255,255,255,0.85)', fontSize: 11, display: 'flex', gap: 20, alignItems: 'center' }}>
+          {batchProgress.running && (
+            <span style={{ color: T.yellow }}>
+              ▶ Analizando {batchProgress.current}/{batchProgress.total} activos...
+            </span>
+          )}
+          {autoRefresh && countdown > 0 && !batchProgress.running && (
+            <span style={{ color: '#93c5fd' }}>
+              ⏱ Próximo análisis en {formatCountdown(countdown)}
+            </span>
+          )}
+          <span
+            data-no-drag
+            onClick={onToggleAutoRefresh}
+            style={{
+              cursor: 'pointer',
+              display: 'flex', alignItems: 'center', gap: 5,
+              padding: '2px 8px',
+              border: `1px solid ${autoRefresh ? '#60a5fa' : 'rgba(255,255,255,0.3)'}`,
+              borderRadius: 2,
+              color: autoRefresh ? '#60a5fa' : 'rgba(255,255,255,0.5)',
+            }}
+          >
+            {autoRefresh ? '● AUTO-REFRESH ON' : '○ AUTO-REFRESH OFF'}
+          </span>
+          <span style={{ color: 'rgba(255,255,255,0.6)' }}>{time} UTC</span>
         </span>
       </div>
       <div style={{ color: 'rgba(255,255,255,0.55)', fontSize: 10, letterSpacing: '0.06em' }}>
-        ╚═ MULTI-AGENT SYSTEM · CLAUDE SONNET · 4 SPECIALISTS ═╝
+        ╚═ MULTI-AGENT SYSTEM · CLAUDE SONNET · 4 SPECIALISTS · MULTI-ASSET WATCHLIST ═╝
       </div>
     </div>
   );
@@ -639,12 +683,9 @@ function SysCfgPanel({ profile, setProfile }) {
 
       <div>
         <label style={labelStyle}>RISK PROFILE</label>
-        <select
-          data-no-drag
-          value={profile.risk_profile}
+        <select data-no-drag value={profile.risk_profile}
           onChange={e => setProfile(p => ({ ...p, risk_profile: e.target.value }))}
-          style={{ ...inputStyle }}
-        >
+          style={{ ...inputStyle }}>
           <option value="conservative">CONSERVATIVE</option>
           <option value="moderate">MODERATE</option>
           <option value="aggressive">AGGRESSIVE</option>
@@ -653,15 +694,12 @@ function SysCfgPanel({ profile, setProfile }) {
 
       <div>
         <label style={labelStyle}>TIME HORIZON</label>
-        <select
-          data-no-drag
-          value={profile.time_horizon}
+        <select data-no-drag value={profile.time_horizon}
           onChange={e => setProfile(p => ({ ...p, time_horizon: e.target.value }))}
-          style={{ ...inputStyle }}
-        >
-          <option value="short">SHORT (&lt;1 year)</option>
-          <option value="medium">MEDIUM (1–3 years)</option>
-          <option value="long">LONG (&gt;3 years)</option>
+          style={{ ...inputStyle }}>
+          <option value="short">SHORT (&lt;3 months)</option>
+          <option value="medium">MEDIUM (3–12 months)</option>
+          <option value="long">LONG (1–3 years)</option>
         </select>
       </div>
 
@@ -678,130 +716,142 @@ function SysCfgPanel({ profile, setProfile }) {
           style={{ ...inputStyle }}
         />
       </div>
-
     </div>
   );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// PANEL: [MKT.IN] — Ticker input + 4 agent status cards
+// PANEL: [MKT.IN] — Watchlist + Batch Progress
 // ─────────────────────────────────────────────────────────────────────────────
 
-function MktInPanel({ ticker, setTicker, isAnalyzing, onAnalyze, agentStates, agentResults, errors, autoRefresh, setAutoRefresh }) {
-  const dots = useDots(isAnalyzing);
-  const agents = [
-    { key: 'technical',    label: 'AGENT 01 · TECHNICAL   ' },
-    { key: 'fundamental',  label: 'AGENT 02 · FUNDAMENTAL ' },
-    { key: 'risk',         label: 'AGENT 03 · RISK MGT    ' },
-    { key: 'orchestrator', label: 'AGENT 04 · ORCHESTRATOR' },
-  ];
+function WatchlistPanel({ watchlist, setWatchlist, isRunning, onAnalyzeAll, batchProgress, assetData }) {
+  const [inputVal, setInputVal] = React.useState('');
+  const dots = useDots(isRunning);
 
-  const signalColor = (s) => s === 'buy' ? T.green : s === 'sell' ? T.red : T.yellow;
+  const addTicker = () => {
+    const t = inputVal.trim().toUpperCase();
+    if (!t || watchlist.includes(t) || watchlist.length >= 100) return;
+    setWatchlist(prev => [...prev, t]);
+    setInputVal('');
+  };
+
+  const removeTicker = (t) => setWatchlist(prev => prev.filter(x => x !== t));
+
+  const readyCount = watchlist.filter(t => assetData[t]?.status === 'ready').length;
+  const errorCount = watchlist.filter(t => assetData[t]?.status === 'error').length;
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-      {/* Ticker input row */}
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      {/* Add ticker input */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         <span style={{ color: T.greenMid, fontSize: 14 }}>{'>'}</span>
         <input
-          data-no-drag
-          type="text"
-          value={ticker}
-          onChange={e => setTicker(e.target.value.toUpperCase())}
-          onKeyDown={e => e.key === 'Enter' && !isAnalyzing && onAnalyze()}
+          data-no-drag type="text"
+          value={inputVal}
+          onChange={e => setInputVal(e.target.value.toUpperCase())}
+          onKeyDown={e => e.key === 'Enter' && addTicker()}
           maxLength={10}
-          placeholder="TICKER"
+          placeholder="ADD TICKER"
           style={{
             flex: 1, background: T.bg, color: T.green,
             border: `1px solid ${T.greenDark}`, fontFamily: T.font,
-            fontSize: 14, padding: '4px 8px', outline: 'none',
+            fontSize: 13, padding: '4px 8px', outline: 'none',
             caretColor: T.green, letterSpacing: '0.12em',
           }}
         />
-        <button
-          data-no-drag
-          onClick={onAnalyze}
-          disabled={isAnalyzing || !ticker.trim()}
+        <button data-no-drag onClick={addTicker}
+          disabled={!inputVal.trim() || watchlist.length >= 100}
           style={{
-            background: isAnalyzing ? T.bgPanel : T.bg,
-            color: isAnalyzing ? T.greenDark : T.green,
-            border: `1px solid ${isAnalyzing ? T.greenDark : T.green}`,
-            fontFamily: T.font, fontSize: 12, padding: '4px 10px',
-            cursor: isAnalyzing ? 'not-allowed' : 'pointer',
-            letterSpacing: '0.06em',
-          }}
-        >
-          {isAnalyzing ? `ANLZ${dots}` : 'ANALYZE ▶'}
+            background: T.bg, color: T.green,
+            border: `1px solid ${T.green}`,
+            fontFamily: T.font, fontSize: 11, padding: '4px 8px',
+            cursor: 'pointer', letterSpacing: '0.04em',
+          }}>
+          + ADD
         </button>
+      </div>
+
+      {/* Watchlist chips */}
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, maxHeight: 120, overflowY: 'auto' }}>
+        {watchlist.map(t => {
+          const st = assetData[t]?.status;
+          const chipColor = st === 'ready' ? T.green : st === 'error' ? T.red : st === 'fetching' || st === 'analyzing' ? T.yellow : T.greenMid;
+          return (
+            <span key={t} style={{
+              display: 'inline-flex', alignItems: 'center', gap: 4,
+              border: `1px solid ${chipColor}`,
+              padding: '2px 7px', fontSize: 11, color: chipColor,
+              background: `${chipColor}10`,
+            }}>
+              {t}
+              {st === 'fetching' || st === 'analyzing' ? <span style={{ fontSize: 9 }}>{dots}</span> : null}
+              {st === 'error' ? <span style={{ fontSize: 9 }}>✗</span> : null}
+              {st === 'ready' ? <span style={{ fontSize: 9 }}>✓</span> : null}
+              <span
+                data-no-drag
+                onClick={() => removeTicker(t)}
+                style={{ cursor: 'pointer', color: T.greenMid, marginLeft: 2, fontSize: 12, lineHeight: 1 }}
+              >×</span>
+            </span>
+          );
+        })}
+        {watchlist.length === 0 && (
+          <span style={{ color: T.greenDark, fontSize: 11 }}>Sin activos en watchlist</span>
+        )}
       </div>
 
       {/* Divider */}
       <div style={{ borderTop: `1px solid ${T.greenDark}` }} />
 
-      {/* Auto-refresh toggle */}
-      <div
-        onClick={() => setAutoRefresh(v => !v)}
-        style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}
+      {/* Analyze All button */}
+      <button
+        data-no-drag
+        onClick={onAnalyzeAll}
+        disabled={isRunning || watchlist.length === 0}
+        style={{
+          background: isRunning ? T.bg : T.bgHeader,
+          color: '#ffffff',
+          border: `1px solid ${T.bgHeader}`,
+          fontFamily: T.font, fontSize: 12, padding: '8px 0',
+          cursor: isRunning ? 'not-allowed' : 'pointer',
+          letterSpacing: '0.08em', opacity: isRunning ? 0.7 : 1,
+        }}
       >
-        <span style={{ color: T.greenMid, fontSize: 11, letterSpacing: '0.08em' }}>AUTO-REFRESH (15 min)</span>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11 }}>
-          <span style={{ color: autoRefresh ? T.greenDark : T.green }}>[OFF]</span>
-          <span style={{ color: T.greenMid }}>{autoRefresh ? '●───' : '───●'}</span>
-          <span style={{ color: autoRefresh ? T.green : T.greenDark }}>[ON]</span>
-        </div>
-      </div>
+        {isRunning ? `ANALIZANDO${dots}` : `▶ ANALIZAR TODO (${watchlist.length})`}
+      </button>
 
-      {/* Agent status rows */}
-      {agents.map(({ key, label }) => {
-        const st = agentStates[key] || 'idle';
-        const badge = BADGE[st] || BADGE.idle;
-        const pct = STAGE_PCT[st] || 0;
-        const result = agentResults[key];
-        const signal = result?.signal || result?.final_action;
-        const confidence = result?.confidence ?? result?.confidence_score;
-        const isErr = st === 'error';
-
-        return (
-          <div key={key} style={{ fontFamily: T.font, fontSize: 11 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 3 }}>
-              <span style={{ color: T.greenMid, minWidth: 200 }}>{label}</span>
-              <span
-                style={{ color: badge.color, minWidth: 52 }}
-                className={badge.pulse ? 'animate-pulse' : ''}
-              >
-                {badge.text}
-              </span>
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <span style={{ color: isErr ? T.red : T.greenMid, letterSpacing: 2 }}>
-                {bar(pct)}
-              </span>
-              {signal && (
-                <span style={{ color: signalColor(signal), fontSize: 10, fontWeight: 'bold' }}>
-                  {signal.toUpperCase()}
-                </span>
-              )}
-              {confidence != null && (
-                <span style={{ color: T.greenMid, fontSize: 10 }}>{confidence}%</span>
-              )}
-              {result?.risk_level && !signal && (
-                <span style={{ color: T.yellow, fontSize: 10 }}>{result.risk_level.toUpperCase()}</span>
-              )}
-            </div>
-            {errors[key] && (
-              <div style={{ color: T.red, fontSize: 10, marginTop: 2 }}>
-                ⚠ {errors[key].slice(0, 60)}
-              </div>
-            )}
+      {/* Batch progress bar */}
+      {(isRunning || batchProgress.total > 0) && (
+        <div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: T.greenMid, marginBottom: 3 }}>
+            <span>PROGRESO GLOBAL</span>
+            <span>{batchProgress.current}/{batchProgress.total} activos</span>
           </div>
-        );
-      })}
+          <div style={{ background: T.greenDark, height: 4, borderRadius: 2 }}>
+            <div style={{
+              background: T.green,
+              height: 4, borderRadius: 2,
+              width: batchProgress.total > 0 ? `${(batchProgress.current / batchProgress.total) * 100}%` : '0%',
+              transition: 'width 0.3s ease',
+            }} />
+          </div>
+          <div style={{ display: 'flex', gap: 12, fontSize: 10, color: T.greenMid, marginTop: 4 }}>
+            {readyCount > 0 && <span style={{ color: T.green }}>✓ {readyCount} listos</span>}
+            {errorCount > 0 && <span style={{ color: T.red }}>✗ {errorCount} errores</span>}
+          </div>
+        </div>
+      )}
+
+      {/* Capacity indicator */}
+      <div style={{ color: T.greenDark, fontSize: 10, textAlign: 'right' }}>
+        {watchlist.length}/100 activos
+      </div>
     </div>
   );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// PANEL: [PRC.DAT] — Price chart + current price
+// PANEL: [PRC.DAT] — Price chart para activo seleccionado
 // ─────────────────────────────────────────────────────────────────────────────
 
 function PrcDatPanel({ tech, ticker }) {
@@ -816,13 +866,11 @@ function PrcDatPanel({ tech, ticker }) {
   if (!tech) {
     return (
       <div style={{ color: T.greenDark, fontSize: 11 }}>
-        <div>{row('TICKER', '---')}</div>
+        <div>{row('TICKER', ticker || '---')}</div>
         <div>{row('PRICE', '$---.--')}</div>
-        <div style={{ marginTop: 12, color: T.greenDark }}>
-          {'─'.repeat(40)}
-        </div>
+        <div style={{ marginTop: 12, color: T.greenDark }}>{'─'.repeat(40)}</div>
         <div style={{ marginTop: 8, color: T.greenDark, textAlign: 'center' }}>
-          AWAITING DATA
+          {ticker ? 'ANALIZANDO...' : 'SELECCIONA UN ACTIVO'}
         </div>
       </div>
     );
@@ -830,7 +878,6 @@ function PrcDatPanel({ tech, ticker }) {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-      {/* Header row */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
         <span style={{ color: T.green, fontSize: 14, fontWeight: 'bold', letterSpacing: '0.1em' }}>
           {ticker}
@@ -856,25 +903,17 @@ function PrcDatPanel({ tech, ticker }) {
                 <stop offset="100%" stopColor={T.green} stopOpacity={0} />
               </linearGradient>
             </defs>
-            <XAxis
-              dataKey="date"
+            <XAxis dataKey="date"
               tick={{ fontSize: 9, fill: T.greenDark, fontFamily: T.font }}
-              interval={Math.floor(data.length / 5)}
-              tickLine={false}
-              axisLine={{ stroke: T.greenDark }}
-            />
+              interval={Math.floor(data.length / 5)} tickLine={false}
+              axisLine={{ stroke: T.greenDark }} />
             <Tooltip
               contentStyle={{ background: T.bgPanel, border: `1px solid ${T.greenDark}`, fontFamily: T.font, fontSize: 11 }}
-              labelStyle={{ color: T.greenMid }}
-              itemStyle={{ color: T.green }}
-            />
-            <Area
-              type="monotone" dataKey="price"
+              labelStyle={{ color: T.greenMid }} itemStyle={{ color: T.green }} />
+            <Area type="monotone" dataKey="price"
               stroke={T.green} strokeWidth={1.5}
-              fill="url(#greenGradient)"
-              dot={false}
-              activeDot={{ r: 3, fill: T.green, strokeWidth: 0 }}
-            />
+              fill="url(#greenGradient)" dot={false}
+              activeDot={{ r: 3, fill: T.green, strokeWidth: 0 }} />
           </AreaChart>
         </ResponsiveContainer>
       </div>
@@ -883,86 +922,291 @@ function PrcDatPanel({ tech, ticker }) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// PANEL: [ANLYTCS] — Technical, Fundamental, Risk metrics
+// PANEL: [ANLYTCS] — Tabla multi-activo con ordenamiento y expansión
 // ─────────────────────────────────────────────────────────────────────────────
 
-function AnalyticsPanel({ tech, fund, risk }) {
-  const colStyle = {
-    flex: 1, display: 'flex', flexDirection: 'column', gap: 4,
-    borderRight: `1px solid ${T.greenDark}`, paddingRight: 12,
+function MultiAssetTable({ assetData, watchlist, profile, selectedAsset, onSelectAsset }) {
+  const [sortKey, setSortKey] = React.useState('ticker');
+  const [sortDir, setSortDir] = React.useState('asc');
+
+  const signalColor = (s) => {
+    const su = (s || '').toUpperCase();
+    return su === 'BUY' ? T.green : su === 'SELL' ? T.red : T.yellow;
   };
-  const headerStyle = {
-    color: T.greenMid, fontSize: 10, letterSpacing: '0.1em',
-    borderBottom: `1px solid ${T.greenDark}`, paddingBottom: 4, marginBottom: 6,
+
+  const riskColor = (r) => r === 'low' ? T.green : r === 'high' ? T.red : T.yellow;
+
+  const handleSort = (key) => {
+    if (sortKey === key) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
+    else { setSortKey(key); setSortDir('asc'); }
   };
-  const metricStyle = { color: T.green, fontSize: 11, whiteSpace: 'pre' };
-  const dash = '---';
+
+  const rows = watchlist.map(ticker => {
+    const d = assetData[ticker] || {};
+    const orch = d.horizons?.[profile.time_horizon];
+    return {
+      ticker,
+      status: d.status || 'idle',
+      price: d.tech?.currentPrice ?? null,
+      signal: orch?.final_action ?? null,
+      confidence: orch?.confidence_score ?? null,
+      pe: d.fund?.pe ?? null,
+      rsi: d.tech?.rsi ?? null,
+      risk: d.risk?.risk_level ?? null,
+      maxWeight: d.risk?.max_weight ?? null,
+      stopLoss: orch?.stop_loss ?? null,
+      horizon: profile.time_horizon,
+      error: d.error,
+    };
+  });
+
+  const sortedRows = [...rows].sort((a, b) => {
+    let aVal = a[sortKey];
+    let bVal = b[sortKey];
+    if (sortKey === 'ticker') { aVal = aVal || ''; bVal = bVal || ''; }
+    if (aVal == null) return 1;
+    if (bVal == null) return -1;
+    if (typeof aVal === 'string') return sortDir === 'asc' ? aVal.localeCompare(bVal) : bVal.localeCompare(aVal);
+    return sortDir === 'asc' ? aVal - bVal : bVal - aVal;
+  });
+
+  const thStyle = (key) => ({
+    color: sortKey === key ? T.green : T.greenMid,
+    fontSize: 10, letterSpacing: '0.06em', padding: '4px 8px',
+    cursor: 'pointer', whiteSpace: 'nowrap', textAlign: 'left',
+    borderBottom: `1px solid ${T.greenDark}`,
+    userSelect: 'none',
+    background: sortKey === key ? `${T.green}08` : 'transparent',
+  });
+
+  const tdStyle = {
+    padding: '5px 8px', fontSize: 11, borderBottom: `1px solid ${T.greenDark}10`,
+    whiteSpace: 'nowrap', verticalAlign: 'middle',
+  };
+
+  const cols = [
+    { key: 'ticker',    label: 'TICKER' },
+    { key: 'price',     label: 'PRECIO' },
+    { key: 'signal',    label: 'SEÑAL' },
+    { key: 'confidence',label: 'CONFIANZA' },
+    { key: 'pe',        label: 'P/E' },
+    { key: 'rsi',       label: 'RSI' },
+    { key: 'risk',      label: 'RIESGO' },
+    { key: 'maxWeight', label: 'PESO MAX' },
+    { key: 'stopLoss',  label: 'STOP LOSS' },
+    { key: 'horizon',   label: 'HORIZONTE' },
+  ];
+
+  if (watchlist.length === 0) {
+    return (
+      <div style={{ color: T.greenDark, fontSize: 11, textAlign: 'center', paddingTop: 40 }}>
+        Agregá activos a la watchlist y hacé click en ANALIZAR TODO
+      </div>
+    );
+  }
 
   return (
-    <div style={{ display: 'flex', gap: 12, height: '100%' }}>
-      {/* Technical */}
-      <div style={colStyle}>
-        <div style={headerStyle}>── TECHNICAL ──</div>
-        {[
-          row('RSI(14)', tech ? tech.rsi : dash),
-          row('SMA 50', tech ? `$${tech.sma50}` : dash),
-          row('SMA 200', tech ? `$${tech.sma200}` : dash),
-          row('MACD', tech ? tech.macd : dash),
-          row('TREND', tech ? (tech.sma50 > tech.sma200 ? '▲ BULL' : '▼ BEAR') : dash),
-        ].map((line, i) => (
-          <div key={i} style={metricStyle}>{line}</div>
-        ))}
-      </div>
+    <div style={{ overflowX: 'auto' }}>
+      <table style={{ width: '100%', borderCollapse: 'collapse', fontFamily: T.font }}>
+        <thead>
+          <tr>
+            {cols.map(c => (
+              <th key={c.key} style={thStyle(c.key)} onClick={() => handleSort(c.key)}>
+                {c.label}{sortKey === c.key ? (sortDir === 'asc' ? ' ▲' : ' ▼') : ''}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {sortedRows.map(r => {
+            const isSelected = selectedAsset === r.ticker;
+            const asset = assetData[r.ticker];
+            return (
+              <React.Fragment key={r.ticker}>
+                <tr
+                  onClick={() => onSelectAsset(isSelected ? null : r.ticker)}
+                  style={{
+                    cursor: 'pointer',
+                    background: isSelected ? `${T.green}10` : 'transparent',
+                  }}
+                >
+                  {/* TICKER */}
+                  <td style={{ ...tdStyle, fontWeight: 'bold', color: T.green }}>
+                    {r.ticker}
+                    {r.status === 'fetching' || r.status === 'analyzing'
+                      ? <span style={{ color: T.yellow, marginLeft: 4, fontSize: 9 }}>●</span>
+                      : null}
+                  </td>
+                  {/* PRECIO */}
+                  <td style={{ ...tdStyle, color: T.green }}>
+                    {r.price != null ? `$${r.price.toFixed(2)}` : '---'}
+                  </td>
+                  {/* SEÑAL */}
+                  <td style={{ ...tdStyle }}>
+                    {r.status === 'error'
+                      ? <span style={{ color: T.red, fontSize: 10 }}>[ERR]</span>
+                      : r.signal
+                        ? <span style={{
+                            color: '#fff', background: signalColor(r.signal),
+                            padding: '1px 6px', fontSize: 10, letterSpacing: '0.06em',
+                          }}>{r.signal.toUpperCase()}</span>
+                        : <span style={{ color: T.greenDark }}>---</span>}
+                  </td>
+                  {/* CONFIANZA */}
+                  <td style={{ ...tdStyle }}>
+                    {r.confidence != null ? (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                        <div style={{ width: 60, height: 5, background: T.greenDark, borderRadius: 2 }}>
+                          <div style={{
+                            width: `${r.confidence}%`, height: 5, borderRadius: 2,
+                            background: r.confidence >= 70 ? T.green : r.confidence >= 50 ? T.yellow : T.red,
+                          }} />
+                        </div>
+                        <span style={{ color: T.greenMid, fontSize: 10 }}>{r.confidence}%</span>
+                      </div>
+                    ) : <span style={{ color: T.greenDark }}>---</span>}
+                  </td>
+                  {/* P/E */}
+                  <td style={{ ...tdStyle, color: T.greenMid }}>
+                    {r.pe != null ? r.pe.toFixed(1) : '---'}
+                  </td>
+                  {/* RSI */}
+                  <td style={{ ...tdStyle, color: r.rsi != null ? (r.rsi > 70 ? T.red : r.rsi < 30 ? T.green : T.greenMid) : T.greenDark }}>
+                    {r.rsi != null ? r.rsi.toFixed(1) : '---'}
+                  </td>
+                  {/* RIESGO */}
+                  <td style={{ ...tdStyle }}>
+                    {r.risk ? (
+                      <span style={{
+                        color: riskColor(r.risk), border: `1px solid ${riskColor(r.risk)}`,
+                        padding: '1px 5px', fontSize: 10,
+                      }}>
+                        {r.risk.toUpperCase()}
+                      </span>
+                    ) : <span style={{ color: T.greenDark }}>---</span>}
+                  </td>
+                  {/* PESO MAX */}
+                  <td style={{ ...tdStyle, color: T.greenMid }}>
+                    {r.maxWeight != null ? `${r.maxWeight}%` : '---'}
+                  </td>
+                  {/* STOP LOSS */}
+                  <td style={{ ...tdStyle, color: T.red }}>
+                    {r.stopLoss != null ? `$${r.stopLoss.toFixed(2)}` : '---'}
+                  </td>
+                  {/* HORIZONTE */}
+                  <td style={{ ...tdStyle, color: T.greenMid, fontSize: 10 }}>
+                    {r.horizon.toUpperCase()}
+                  </td>
+                </tr>
 
-      {/* Fundamental */}
-      <div style={colStyle}>
-        <div style={headerStyle}>── FUNDAMENTAL ──</div>
-        {[
-          row('P/E RATIO', fund ? fund.pe : dash),
-          row('ROE', fund ? `${fund.roe}%` : dash),
-          row('PEG RATIO', fund ? fund.peg : dash),
-          row('QUALITY', fund ? `${fund.quality_score}/100` : dash),
-          row('VALUATION', fund ? fund.valuation.toUpperCase() : dash),
-        ].map((line, i) => (
-          <div key={i} style={metricStyle}>{line}</div>
-        ))}
-      </div>
+                {/* FILA EXPANDIDA */}
+                {isSelected && asset && (
+                  <tr>
+                    <td colSpan={10} style={{ padding: '0 0 8px 0', background: `${T.green}05` }}>
+                      <AssetDetailExpanded asset={asset} ticker={r.ticker} profile={profile} />
+                    </td>
+                  </tr>
+                )}
+              </React.Fragment>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
 
-      {/* Risk */}
-      <div style={{ ...colStyle, borderRight: 'none', paddingRight: 0 }}>
-        <div style={headerStyle}>── RISK ──</div>
+// ─────────────────────────────────────────────────────────────────────────────
+// COMPONENT: AssetDetailExpanded — detalle inline en la tabla
+// ─────────────────────────────────────────────────────────────────────────────
+
+function AssetDetailExpanded({ asset, ticker, profile }) {
+  const signalColor = (s) => (s === 'buy' || s === 'BUY') ? T.green : (s === 'sell' || s === 'SELL') ? T.red : T.yellow;
+
+  const horizonLabels = {
+    short:  'CORTO  (<3m)',
+    medium: 'MEDIANO (3-12m)',
+    long:   'LARGO  (1-3y)',
+  };
+
+  return (
+    <div style={{
+      padding: '10px 12px',
+      borderLeft: `3px solid ${T.green}`,
+      marginLeft: 8,
+      display: 'flex', gap: 20, flexWrap: 'wrap',
+    }}>
+      {/* Agentes */}
+      <div style={{ minWidth: 200 }}>
+        <div style={{ color: T.greenMid, fontSize: 10, marginBottom: 6, letterSpacing: '0.08em' }}>── AGENT SIGNALS ──</div>
         {[
-          row('LEVEL', risk ? risk.risk_level.toUpperCase() : dash),
-          row('VOL 30D', risk ? `${risk.volatility_30d}%` : dash),
-          row('VAR(95%)', risk ? `$${risk.var_95}` : dash),
-          row('BETA', risk ? risk.beta : dash),
-          row('MAX WT', risk ? `${risk.max_weight}%` : dash),
-        ].map((line, i) => (
-          <div
-            key={i}
-            style={{
-              ...metricStyle,
-              color: i === 0 && risk
-                ? (risk.risk_level === 'low' ? T.green : risk.risk_level === 'high' ? T.red : T.yellow)
-                : T.green,
-            }}
-          >
-            {line}
+          asset.tech  && { label: 'TÉCNICO',     signal: asset.tech.signal,     conf: asset.tech.confidence,  just: asset.tech.justification },
+          asset.fund  && { label: 'FUNDAMENTAL', signal: asset.fund.signal,     conf: asset.fund.confidence,  just: asset.fund.justification },
+          asset.risk  && { label: 'RIESGO',      signal: asset.risk.risk_level, conf: null,                   just: asset.risk.justification },
+        ].filter(Boolean).map(({ label, signal, conf, just }, i) => (
+          <div key={i} style={{ marginBottom: 5 }}>
+            <div style={{ display: 'flex', gap: 6, fontSize: 11 }}>
+              <span style={{ color: T.greenMid, minWidth: 90 }}>{label}</span>
+              <span style={{ color: signalColor(signal) }}>{(signal || '---').toUpperCase()}</span>
+              {conf != null && <span style={{ color: T.greenDark, fontSize: 10 }}>{conf}%</span>}
+            </div>
+            {just && (
+              <div style={{ color: T.greenDark, fontSize: 10, paddingLeft: 8 }}>
+                {'> '}{just.slice(0, 80)}{just.length > 80 ? '…' : ''}
+              </div>
+            )}
           </div>
         ))}
+      </div>
+
+      {/* Tres horizontes */}
+      <div style={{ flex: 1, minWidth: 400 }}>
+        <div style={{ color: T.greenMid, fontSize: 10, marginBottom: 6, letterSpacing: '0.08em' }}>── ANÁLISIS POR HORIZONTE ──</div>
+        <div style={{ display: 'flex', gap: 12 }}>
+          {['short', 'medium', 'long'].map(h => {
+            const orch = asset.horizons?.[h];
+            const isPrimary = h === profile.time_horizon;
+            const action = orch?.final_action?.toUpperCase() || '---';
+            const actionColor = signalColor(action);
+            return (
+              <div key={h} style={{
+                flex: 1, padding: '8px 10px',
+                border: `1px solid ${isPrimary ? T.green : T.greenDark}`,
+                background: isPrimary ? `${T.green}08` : 'transparent',
+              }}>
+                <div style={{ color: isPrimary ? T.green : T.greenMid, fontSize: 10, marginBottom: 4, letterSpacing: '0.05em' }}>
+                  {horizonLabels[h]}{isPrimary ? ' ★' : ''}
+                </div>
+                <div style={{ color: actionColor, fontSize: 13, fontWeight: 'bold', marginBottom: 3 }}>{action}</div>
+                <div style={{ color: T.greenDark, fontSize: 10 }}>
+                  CONF: {orch?.confidence_score ?? '---'}%
+                </div>
+                <div style={{ color: T.greenDark, fontSize: 10 }}>
+                  TARGET: {orch?.price_target ? `$${orch.price_target.toFixed(2)}` : '---'}
+                </div>
+                <div style={{ color: T.red, fontSize: 10 }}>
+                  STOP: {orch?.stop_loss ? `$${orch.stop_loss.toFixed(2)}` : '---'}
+                </div>
+                {orch?._local && (
+                  <div style={{ color: T.greenDark, fontSize: 9, marginTop: 2, fontStyle: 'italic' }}>local calc</div>
+                )}
+              </div>
+            );
+          })}
+        </div>
       </div>
     </div>
   );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// COMPONENT: ConfidenceRing — animated SVG donut, value 0–100
+// COMPONENT: ConfidenceRing
 // ─────────────────────────────────────────────────────────────────────────────
 
 function ConfidenceRing({ value }) {
   const [displayed, setDisplayed] = React.useState(0);
   React.useEffect(() => {
-    const t = setTimeout(() => setDisplayed(value), 50); // trigger CSS transition after mount
+    const t = setTimeout(() => setDisplayed(value), 50);
     return () => clearTimeout(t);
   }, [value]);
 
@@ -975,16 +1219,13 @@ function ConfidenceRing({ value }) {
   return (
     <div style={{ position: 'relative', width: size, height: size,
                   display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
-      <svg width={size} height={size}
-           style={{ position: 'absolute', transform: 'rotate(-90deg)' }}>
+      <svg width={size} height={size} style={{ position: 'absolute', transform: 'rotate(-90deg)' }}>
+        <circle cx={size/2} cy={size/2} r={r} fill="none" stroke={T.greenDark} strokeWidth={sw} />
         <circle cx={size/2} cy={size/2} r={r} fill="none"
-                stroke={T.greenDark} strokeWidth={sw} />
-        <circle cx={size/2} cy={size/2} r={r} fill="none"
-                stroke={color} strokeWidth={sw}
-                strokeDasharray={circ}
-                strokeDashoffset={offset}
-                strokeLinecap="round"
-                style={{ transition: 'stroke-dashoffset 0.8s ease, stroke 0.3s ease' }} />
+          stroke={color} strokeWidth={sw}
+          strokeDasharray={circ} strokeDashoffset={offset}
+          strokeLinecap="round"
+          style={{ transition: 'stroke-dashoffset 0.8s ease, stroke 0.3s ease' }} />
       </svg>
       <div style={{ position: 'relative', textAlign: 'center', fontFamily: T.font }}>
         <div style={{ color, fontSize: 20, fontWeight: 'bold', lineHeight: 1 }}>{value}</div>
@@ -995,17 +1236,22 @@ function ConfidenceRing({ value }) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// PANEL: [SIG.OUT] — Final recommendation output
+// PANEL: [SIG.OUT] — Recomendación del activo seleccionado
 // ─────────────────────────────────────────────────────────────────────────────
 
-function SigOutPanel({ orch, tech, fund, risk, profile, errors }) {
-  if (!orch) {
+function SigOutPanel({ assetEntry, profile }) {
+  const orch = assetEntry?.horizons?.[profile.time_horizon];
+  const tech = assetEntry?.tech;
+  const fund = assetEntry?.fund;
+  const risk = assetEntry?.risk;
+
+  if (!assetEntry || !orch) {
     return (
       <div style={{ color: T.greenDark, fontSize: 11 }}>
-        <div style={{ marginBottom: 12 }}>SIGNAL......: AWAITING INPUT</div>
+        <div style={{ marginBottom: 12 }}>SIGNAL......: AWAITING SELECTION</div>
         <ConfidenceRing value={0} />
         <div style={{ marginTop: 12, color: T.greenDark }}>
-          Run an analysis to see the recommendation.
+          Selecciona un activo de la tabla para ver el detalle.
         </div>
       </div>
     );
@@ -1021,7 +1267,6 @@ function SigOutPanel({ orch, tech, fund, risk, profile, errors }) {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10, fontSize: 11 }}>
-      {/* Action + Ring */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
         <div>
           <div style={{ color: T.greenDark, fontSize: 10, marginBottom: 4 }}>FINAL SIGNAL</div>
@@ -1030,13 +1275,12 @@ function SigOutPanel({ orch, tech, fund, risk, profile, errors }) {
             border: `1px solid ${actionColor}`, padding: '6px 16px',
             letterSpacing: '0.2em',
             boxShadow: `0 0 10px ${actionColor}40`,
-          }}>
-            ▓ {action} ▓
-          </div>
+          }}>▓ {action} ▓</div>
           {orch.contradiction_detected && (
-            <div style={{ color: T.yellow, fontSize: 10, marginTop: 6 }}>
-              ⚠ CONTRADICTION DETECTED
-            </div>
+            <div style={{ color: T.yellow, fontSize: 10, marginTop: 6 }}>⚠ CONTRADICTION DETECTED</div>
+          )}
+          {orch._local && (
+            <div style={{ color: T.greenDark, fontSize: 9, marginTop: 4 }}>calculado localmente</div>
           )}
         </div>
         <div>
@@ -1045,19 +1289,17 @@ function SigOutPanel({ orch, tech, fund, risk, profile, errors }) {
         </div>
       </div>
 
-      {/* Metrics */}
       <div style={{ borderTop: `1px solid ${T.greenDark}`, paddingTop: 8 }}>
         {[
           row('PRICE TARGET', orch.price_target ? `$${orch.price_target.toFixed(2)}${pctTarget ? ` (${pctTarget > 0 ? '+' : ''}${pctTarget}%)` : ''}` : '---'),
-          row('STOP LOSS', orch.stop_loss ? `$${orch.stop_loss.toFixed(2)}${pctStop ? ` (${pctStop}%)` : ''}` : '---'),
-          row('PORTFOLIO', `${orch.portfolio_weight}% = $${capitalAlloc.toLocaleString('en', { maximumFractionDigits: 0 })}`),
-          row('CONTRADICTION', orch.contradiction_detected ? 'YES ⚠' : 'NO'),
+          row('STOP LOSS',   orch.stop_loss   ? `$${orch.stop_loss.toFixed(2)}${pctStop ? ` (${pctStop}%)` : ''}` : '---'),
+          row('PORTFOLIO',   `${orch.portfolio_weight}% = $${capitalAlloc.toLocaleString('en', { maximumFractionDigits: 0 })}`),
+          row('HORIZONTE',   (orch.time_horizon || profile.time_horizon).toUpperCase()),
         ].map((line, i) => (
           <div key={i} style={{ color: T.green, whiteSpace: 'pre', marginBottom: 3 }}>{line}</div>
         ))}
       </div>
 
-      {/* Multicriteria justification */}
       {orch.justification_multicriteria && (
         <div style={{ borderTop: `1px solid ${T.greenDark}`, paddingTop: 8 }}>
           <div style={{ color: T.greenMid, fontSize: 10, marginBottom: 4 }}>MULTICRITERIA ANALYSIS</div>
@@ -1072,7 +1314,7 @@ function SigOutPanel({ orch, tech, fund, risk, profile, errors }) {
         </div>
       )}
 
-      {/* Agent signal breakdown */}
+      {/* Agent signals */}
       <div style={{ borderTop: `1px solid ${T.greenDark}`, paddingTop: 8 }}>
         <div style={{ color: T.greenMid, fontSize: 10, marginBottom: 4 }}>── AGENT SIGNALS ──</div>
         {[
@@ -1102,8 +1344,163 @@ function SigOutPanel({ orch, tech, fund, risk, profile, errors }) {
   );
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// PANEL: [PRT.SUM] — Portfolio Summary
+// ─────────────────────────────────────────────────────────────────────────────
+
+function PortfolioSummaryPanel({ assetData, watchlist, profile }) {
+  const readyAssets = watchlist
+    .map(ticker => {
+      const d = assetData[ticker];
+      if (!d || d.status !== 'ready') return null;
+      const orch = d.horizons?.[profile.time_horizon];
+      if (!orch) return null;
+      return {
+        ticker,
+        sector:     d.fund?.sector || 'Unknown',
+        weight:     orch.portfolio_weight || 0,
+        maxWeight:  d.risk?.max_weight || 8,
+        action:     orch.final_action,
+      };
+    })
+    .filter(Boolean);
+
+  // Only include BUY recommendations in portfolio
+  const buyAssets = readyAssets.filter(a => a.action === 'buy');
+
+  // Normalize weights so they don't exceed 100% total
+  const rawTotal = buyAssets.reduce((s, a) => s + a.weight, 0);
+  const scaleFactor = rawTotal > 100 ? 100 / rawTotal : 1;
+
+  const allocationRows = buyAssets.map(a => ({
+    ...a,
+    allocatedWeight: +(a.weight * scaleFactor).toFixed(2),
+    allocatedAmount: +(profile.capital * (a.weight * scaleFactor) / 100).toFixed(0),
+  }));
+
+  const totalWeight = allocationRows.reduce((s, a) => s + a.allocatedWeight, 0);
+  const totalAmount = allocationRows.reduce((s, a) => s + a.allocatedAmount, 0);
+  const cashRemaining = profile.capital - totalAmount;
+
+  // Sector concentration
+  const sectorMap = {};
+  allocationRows.forEach(a => {
+    sectorMap[a.sector] = (sectorMap[a.sector] || 0) + a.allocatedWeight;
+  });
+  const maxSectorConc = Math.max(0, ...Object.values(sectorMap));
+  const maxSector = Object.entries(sectorMap).sort((a, b) => b[1] - a[1])[0];
+
+  // Alerts
+  const alerts = [];
+  if (totalWeight > 100) alerts.push({ type: 'error', msg: `Suma de pesos (${totalWeight.toFixed(1)}%) supera 100%` });
+  if (maxSectorConc > 40 && maxSector) alerts.push({ type: 'warn', msg: `Concentración sectorial alta: ${maxSector[0]} (${maxSector[1].toFixed(1)}%)` });
+  allocationRows.forEach(a => {
+    if (a.allocatedWeight > a.maxWeight) alerts.push({ type: 'warn', msg: `${a.ticker}: ${a.allocatedWeight.toFixed(1)}% supera max_weight (${a.maxWeight}%)` });
+  });
+
+  const thStyle = {
+    color: T.greenMid, fontSize: 10, letterSpacing: '0.06em', padding: '3px 8px',
+    borderBottom: `1px solid ${T.greenDark}`, textAlign: 'left',
+  };
+  const tdStyle = { padding: '4px 8px', fontSize: 11, borderBottom: `1px solid ${T.greenDark}10` };
+
+  if (readyAssets.length === 0) {
+    return (
+      <div style={{ color: T.greenDark, fontSize: 11, textAlign: 'center', paddingTop: 30 }}>
+        Ejecuta ANALIZAR TODO para ver el resumen de cartera.
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10, fontSize: 11 }}>
+      {/* Alerts */}
+      {alerts.map((al, i) => (
+        <div key={i} style={{
+          color: al.type === 'error' ? T.red : T.yellow,
+          border: `1px solid ${al.type === 'error' ? T.red : T.yellow}`,
+          padding: '3px 8px', fontSize: 10,
+        }}>
+          ⚠ {al.msg}
+        </div>
+      ))}
+
+      {/* Allocation table */}
+      <table style={{ width: '100%', borderCollapse: 'collapse', fontFamily: T.font }}>
+        <thead>
+          <tr>
+            <th style={thStyle}>TICKER</th>
+            <th style={thStyle}>SECTOR</th>
+            <th style={thStyle}>% CARTERA</th>
+            <th style={thStyle}>MONTO ($)</th>
+          </tr>
+        </thead>
+        <tbody>
+          {allocationRows.map(a => (
+            <tr key={a.ticker}>
+              <td style={{ ...tdStyle, color: T.green, fontWeight: 'bold' }}>{a.ticker}</td>
+              <td style={{ ...tdStyle, color: T.greenMid, fontSize: 10 }}>{a.sector || 'N/A'}</td>
+              <td style={{ ...tdStyle, color: T.green }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                  <div style={{ width: 40, height: 4, background: T.greenDark, borderRadius: 2 }}>
+                    <div style={{ width: `${Math.min(100, a.allocatedWeight)}%`, height: 4, background: T.green, borderRadius: 2 }} />
+                  </div>
+                  <span>{a.allocatedWeight}%</span>
+                  {a.allocatedWeight > a.maxWeight && <span style={{ color: T.yellow, fontSize: 9 }}>⚠</span>}
+                </div>
+              </td>
+              <td style={{ ...tdStyle, color: T.green }}>
+                ${a.allocatedAmount.toLocaleString('en', { maximumFractionDigits: 0 })}
+              </td>
+            </tr>
+          ))}
+
+          {/* Total row */}
+          <tr style={{ borderTop: `1px solid ${T.greenDark}` }}>
+            <td style={{ ...tdStyle, color: T.greenMid, fontWeight: 'bold' }} colSpan={2}>TOTAL INVERTIDO</td>
+            <td style={{ ...tdStyle, color: T.green, fontWeight: 'bold' }}>{totalWeight.toFixed(1)}%</td>
+            <td style={{ ...tdStyle, color: T.green, fontWeight: 'bold' }}>
+              ${totalAmount.toLocaleString('en', { maximumFractionDigits: 0 })}
+            </td>
+          </tr>
+          <tr>
+            <td style={{ ...tdStyle, color: T.greenMid }} colSpan={2}>CASH RESTANTE</td>
+            <td style={{ ...tdStyle, color: cashRemaining < 0 ? T.red : T.greenMid }}>
+              {(100 - totalWeight).toFixed(1)}%
+            </td>
+            <td style={{ ...tdStyle, color: cashRemaining < 0 ? T.red : T.greenMid }}>
+              ${cashRemaining.toLocaleString('en', { maximumFractionDigits: 0 })}
+            </td>
+          </tr>
+        </tbody>
+      </table>
+
+      {/* Sector concentration */}
+      {Object.keys(sectorMap).length > 0 && (
+        <div>
+          <div style={{ color: T.greenMid, fontSize: 10, marginBottom: 4, letterSpacing: '0.06em' }}>── CONCENTRACIÓN SECTORIAL ──</div>
+          {Object.entries(sectorMap).sort((a, b) => b[1] - a[1]).map(([sec, w]) => (
+            <div key={sec} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 3 }}>
+              <span style={{ color: T.greenMid, fontSize: 10, minWidth: 100 }}>{sec.slice(0, 12)}</span>
+              <div style={{ flex: 1, height: 4, background: T.greenDark, borderRadius: 2 }}>
+                <div style={{
+                  width: `${Math.min(100, w)}%`, height: 4, borderRadius: 2,
+                  background: w > 40 ? T.yellow : T.green,
+                }} />
+              </div>
+              <span style={{ color: w > 40 ? T.yellow : T.greenMid, fontSize: 10, minWidth: 36 }}>
+                {w.toFixed(1)}%
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
-// MAIN COMPONENT — InvestmentAdvisor v2.0
+// MAIN COMPONENT — InvestmentAdvisor v3.0
 // ═══════════════════════════════════════════════════════════════════════════════
 
 export default function InvestmentAdvisor() {
@@ -1113,18 +1510,24 @@ export default function InvestmentAdvisor() {
     time_horizon: 'medium', preferred_sectors: [],
   });
 
-  // ── Ticker + analysis state ────────────────────────────────────────────────
-  const [ticker, setTicker] = React.useState('AAPL');
-  const [isAnalyzing, setAnalyzing] = React.useState(false);
-  const [autoRefresh, setAutoRefresh] = React.useState(false);
+  // ── Watchlist ──────────────────────────────────────────────────────────────
+  const [watchlist, setWatchlist] = React.useState(DEFAULT_WATCHLIST);
 
-  const [agentStates, setAgentStates] = React.useState({
-    technical: 'idle', fundamental: 'idle', risk: 'idle', orchestrator: 'idle',
-  });
-  const [agentResults, setAgentResults] = React.useState({
-    technical: null, fundamental: null, risk: null, orchestrator: null,
-  });
-  const [errors, setErrors] = React.useState({});
+  // ── Multi-asset data: { [ticker]: { status, tech, fund, risk, horizons, error } }
+  const [assetData, setAssetData] = React.useState({});
+
+  // ── Batch processing ───────────────────────────────────────────────────────
+  const [batchProgress, setBatchProgress] = React.useState({ current: 0, total: 0, running: false });
+  const isRunningRef = React.useRef(false);
+
+  // ── Selected asset for detail panels ──────────────────────────────────────
+  const [selectedAsset, setSelectedAsset] = React.useState(null);
+
+  // ── Auto-refresh ───────────────────────────────────────────────────────────
+  const [autoRefresh, setAutoRefresh] = React.useState(false);
+  const [countdown, setCountdown] = React.useState(0);
+  const countdownRef = React.useRef(null);
+  const analyzeAllRef = React.useRef(null);
 
   // ── Panel drag system ──────────────────────────────────────────────────────
   const { panels, onTitleMouseDown, toggleMinimize, toggleMaximize } = usePanels();
@@ -1137,90 +1540,119 @@ export default function InvestmentAdvisor() {
     return () => window.removeEventListener('resize', handler);
   }, []);
 
-  // ── Analysis orchestration (unchanged logic) ───────────────────────────────
-  const isAnalyzingRef = React.useRef(false);
-  const autoRefreshRef = React.useRef(null);
-
-  const setAgentState = React.useCallback((agent, status) => {
-    setAgentStates(prev => ({ ...prev, [agent]: status }));
+  // ── updateAsset helper ─────────────────────────────────────────────────────
+  const updateAsset = React.useCallback((ticker, updates) => {
+    setAssetData(prev => ({
+      ...prev,
+      [ticker]: { ...(prev[ticker] || {}), ...updates },
+    }));
   }, []);
 
-  const runAnalysis = React.useCallback(async () => {
-    if (!ticker.trim() || isAnalyzingRef.current) return;
-    isAnalyzingRef.current = true;
-    setAnalyzing(true);
-    setErrors({});
-    setAgentResults({ technical: null, fundamental: null, risk: null, orchestrator: null });
-    setAgentStates({ technical: 'fetching', fundamental: 'fetching', risk: 'waiting', orchestrator: 'waiting' });
-
-    const sym = ticker.trim().toUpperCase();
-    let techResult = null, fundResult = null, riskResult = null;
-    const newErrors = {};
-
-    const [techOutcome, fundOutcome] = await Promise.allSettled([
-      runTechnicalAgent(sym, s => setAgentState('technical', s)),
-      runFundamentalAgent(sym, s => setAgentState('fundamental', s)),
-    ]);
-
-    if (techOutcome.status === 'fulfilled') {
-      techResult = techOutcome.value;
-      setAgentResults(p => ({ ...p, technical: techResult }));
-      setAgentState('technical', 'ready');
-    } else {
-      newErrors.technical = techOutcome.reason?.message || 'Error en análisis técnico';
-      setAgentState('technical', 'error');
-    }
-
-    if (fundOutcome.status === 'fulfilled') {
-      fundResult = fundOutcome.value;
-      setAgentResults(p => ({ ...p, fundamental: fundResult }));
-      setAgentState('fundamental', 'ready');
-    } else {
-      newErrors.fundamental = fundOutcome.reason?.message || 'Error en análisis fundamental';
-      setAgentState('fundamental', 'error');
-    }
-
-    setAgentState('risk', 'analyzing');
+  // ── processAsset: runs the full 4-agent pipeline for one ticker ────────────
+  const processAsset = React.useCallback(async (ticker, prof) => {
     try {
-      riskResult = runRiskAgent(techResult, fundResult, profile);
-      setAgentResults(p => ({ ...p, risk: riskResult }));
-      setAgentState('risk', 'ready');
-    } catch (e) {
-      newErrors.risk = e?.message || 'Error en gestión de riesgo';
-      setAgentState('risk', 'error');
-    }
+      updateAsset(ticker, { status: 'fetching', error: null });
 
-    setErrors({ ...newErrors });
+      const [techOutcome, fundOutcome] = await Promise.allSettled([
+        runTechnicalAgent(ticker, () => {}),
+        runFundamentalAgent(ticker, () => {}),
+      ]);
 
-    if (techResult || fundResult) {
-      setAgentState('orchestrator', 'fetching');
-      try {
-        const orchResult = await runOrchestratorAgent(
-          techResult  || { error: newErrors.technical },
-          fundResult  || { error: newErrors.fundamental },
-          riskResult  || { error: newErrors.risk },
-          profile, s => setAgentState('orchestrator', s),
-        );
-        setAgentResults(p => ({ ...p, orchestrator: orchResult }));
-        setAgentState('orchestrator', 'ready');
-      } catch (e) {
-        setErrors(p => ({ ...p, orchestrator: e?.message || 'Error en orquestador' }));
-        setAgentState('orchestrator', 'error');
+      const tech = techOutcome.status === 'fulfilled' ? techOutcome.value : null;
+      const fund = fundOutcome.status === 'fulfilled' ? fundOutcome.value : null;
+
+      if (!tech && !fund) {
+        const errMsg = techOutcome.reason?.message || fundOutcome.reason?.message || 'Error de datos';
+        updateAsset(ticker, { status: 'error', error: errMsg });
+        return;
       }
-    } else {
-      setErrors(p => ({ ...p, orchestrator: 'Datos insuficientes' }));
-      setAgentState('orchestrator', 'error');
+
+      updateAsset(ticker, { status: 'analyzing', tech, fund });
+
+      let risk = null;
+      try {
+        risk = runRiskAgent(tech, fund, prof);
+      } catch (_) {}
+
+      // Primary horizon via Claude
+      let primaryOrch = null;
+      try {
+        primaryOrch = await runOrchestratorAgent(
+          tech  || { error: techOutcome.reason?.message },
+          fund  || { error: fundOutcome.reason?.message },
+          risk,
+          prof,
+          () => {}
+        );
+      } catch (_) {
+        // Fallback to local computation
+        primaryOrch = computeHorizonLocally(tech, fund, risk, prof.time_horizon);
+      }
+
+      // Compute all three horizons (non-primary ones computed locally)
+      const horizons = {};
+      ['short', 'medium', 'long'].forEach(h => {
+        horizons[h] = (h === prof.time_horizon && primaryOrch)
+          ? primaryOrch
+          : computeHorizonLocally(tech, fund, risk, h);
+      });
+
+      updateAsset(ticker, { status: 'ready', tech, fund, risk, horizons, error: null });
+    } catch (e) {
+      updateAsset(ticker, { status: 'error', error: e?.message || 'Error desconocido' });
+    }
+  }, [updateAsset]);
+
+  // ── analyzeAll: process entire watchlist in batches of 5 ──────────────────
+  const analyzeAll = React.useCallback(async (wl, prof) => {
+    if (isRunningRef.current) return;
+    isRunningRef.current = true;
+
+    const list = wl || watchlist;
+    const p    = prof || profile;
+
+    // Reset all statuses
+    const initial = {};
+    list.forEach(t => { initial[t] = { status: 'waiting', tech: null, fund: null, risk: null, horizons: null, error: null }; });
+    setAssetData(initial);
+    setBatchProgress({ current: 0, total: list.length, running: true });
+
+    for (let i = 0; i < list.length; i += BATCH_SIZE) {
+      const batch = list.slice(i, i + BATCH_SIZE);
+      await Promise.allSettled(batch.map(ticker => processAsset(ticker, p)));
+      const done = Math.min(i + BATCH_SIZE, list.length);
+      setBatchProgress(prev => ({ ...prev, current: done }));
+      if (i + BATCH_SIZE < list.length) {
+        await new Promise(r => setTimeout(r, 1000));
+      }
     }
 
-    isAnalyzingRef.current = false;
-    setAnalyzing(false);
-  }, [ticker, profile, setAgentState]);
+    setBatchProgress(prev => ({ ...prev, running: false }));
+    isRunningRef.current = false;
+  }, [watchlist, profile, processAsset]);
 
+  // Keep ref updated to avoid stale closure in countdown
+  analyzeAllRef.current = () => analyzeAll(watchlist, profile);
+
+  // ── Auto-refresh countdown ─────────────────────────────────────────────────
   React.useEffect(() => {
-    clearInterval(autoRefreshRef.current);
-    if (autoRefresh) autoRefreshRef.current = setInterval(runAnalysis, 15 * 60 * 1000);
-    return () => clearInterval(autoRefreshRef.current);
-  }, [autoRefresh, runAnalysis]);
+    clearInterval(countdownRef.current);
+    if (!autoRefresh) {
+      setCountdown(0);
+      return;
+    }
+    setCountdown(REFRESH_INTERVAL_SECS);
+    countdownRef.current = setInterval(() => {
+      setCountdown(c => {
+        if (c <= 1) {
+          analyzeAllRef.current?.();
+          return REFRESH_INTERVAL_SECS;
+        }
+        return c - 1;
+      });
+    }, 1000);
+    return () => clearInterval(countdownRef.current);
+  }, [autoRefresh]);
 
   // ── Panel helpers ──────────────────────────────────────────────────────────
   const panelProps = (id) => {
@@ -1233,10 +1665,8 @@ export default function InvestmentAdvisor() {
     };
   };
 
-  const orch = agentResults.orchestrator;
-  const tech = agentResults.technical;
-  const fund = agentResults.fundamental;
-  const risk = agentResults.risk;
+  const selectedAssetEntry = selectedAsset ? assetData[selectedAsset] : null;
+  const selectedTech       = selectedAssetEntry?.tech;
 
   // ── Render ─────────────────────────────────────────────────────────────────
   if (isMobile) return <MobileFallback />;
@@ -1250,38 +1680,56 @@ export default function InvestmentAdvisor() {
       position: 'relative',
       overflow: 'hidden',
     }}>
-      <GlobalHeader autoRefresh={autoRefresh} />
+      <GlobalHeader
+        autoRefresh={autoRefresh}
+        onToggleAutoRefresh={() => setAutoRefresh(v => !v)}
+        countdown={countdown}
+        batchProgress={batchProgress}
+      />
 
-      {/* Canvas for draggable panels */}
       <div style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}>
 
-        <TerminalPanel {...panelProps('syscfg')} title="INVESTOR PROFILE">
-          <SysCfgPanel
-            profile={profile} setProfile={setProfile}
+        <TerminalPanel {...panelProps('syscfg')} title="[SYS.CFG] INVESTOR PROFILE">
+          <SysCfgPanel profile={profile} setProfile={setProfile} />
+        </TerminalPanel>
+
+        <TerminalPanel {...panelProps('mktin')} title="[MKT.IN] WATCHLIST">
+          <WatchlistPanel
+            watchlist={watchlist}
+            setWatchlist={setWatchlist}
+            isRunning={batchProgress.running}
+            onAnalyzeAll={() => analyzeAll(watchlist, profile)}
+            batchProgress={batchProgress}
+            assetData={assetData}
           />
         </TerminalPanel>
 
-        <TerminalPanel {...panelProps('mktin')} title="MARKET INPUT">
-          <MktInPanel
-            ticker={ticker} setTicker={setTicker}
-            isAnalyzing={isAnalyzing} onAnalyze={runAnalysis}
-            agentStates={agentStates} agentResults={agentResults} errors={errors}
-            autoRefresh={autoRefresh} setAutoRefresh={setAutoRefresh}
+        <TerminalPanel {...panelProps('prcdat')} title={`[PRC.DAT] ${selectedAsset || 'PRICE DATA'}`}>
+          <PrcDatPanel tech={selectedTech} ticker={selectedAsset || ''} />
+        </TerminalPanel>
+
+        <TerminalPanel {...panelProps('anlytcs')} title="[ANLYTCS] MULTI-ASSET TABLE">
+          <MultiAssetTable
+            assetData={assetData}
+            watchlist={watchlist}
+            profile={profile}
+            selectedAsset={selectedAsset}
+            onSelectAsset={setSelectedAsset}
           />
         </TerminalPanel>
 
-        <TerminalPanel {...panelProps('prcdat')} title="PRICE DATA">
-          <PrcDatPanel tech={tech} ticker={ticker.toUpperCase()} />
-        </TerminalPanel>
-
-        <TerminalPanel {...panelProps('anlytcs')} title="ANALYTICS">
-          <AnalyticsPanel tech={tech} fund={fund} risk={risk} />
-        </TerminalPanel>
-
-        <TerminalPanel {...panelProps('sigout')} title="SIGNAL OUTPUT">
+        <TerminalPanel {...panelProps('sigout')} title={`[SIG.OUT] ${selectedAsset ? `SIGNAL — ${selectedAsset}` : 'SIGNAL OUTPUT'}`}>
           <SigOutPanel
-            orch={orch} tech={tech} fund={fund} risk={risk}
-            profile={profile} errors={errors}
+            assetEntry={selectedAssetEntry}
+            profile={profile}
+          />
+        </TerminalPanel>
+
+        <TerminalPanel {...panelProps('prtsum')} title="[PRT.SUM] PORTFOLIO SUMMARY">
+          <PortfolioSummaryPanel
+            assetData={assetData}
+            watchlist={watchlist}
+            profile={profile}
           />
         </TerminalPanel>
 
@@ -1289,4 +1737,3 @@ export default function InvestmentAdvisor() {
     </div>
   );
 }
-
