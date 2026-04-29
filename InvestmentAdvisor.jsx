@@ -789,10 +789,7 @@ function WatchlistPanel({ watchlist, setWatchlist, isRunning, onAnalyzeAll, batc
                 cursor: isRunning ? 'not-allowed' : 'pointer',
                 letterSpacing: '0.05em',
                 opacity: isRunning ? 0.5 : 1,
-                transition: 'border-color 0.15s',
               }}
-              onMouseEnter={e => { if (!isRunning) e.target.style.borderColor = T.green; }}
-              onMouseLeave={e => { e.target.style.borderColor = T.greenDark; }}
             >
               {name} <span style={{ color: T.greenMid }}>({tickers.length})</span>
             </button>
@@ -1726,4 +1723,72 @@ export default function InvestmentAdvisor() {
   const selectedAssetEntry = selectedAsset ? assetData[selectedAsset] : null;
   const selectedTech       = selectedAssetEntry?.tech;
 
-  // ── Render ───────────────────────────────────────────────────────────────
+  // ── Render ─────────────────────────────────────────────────────────────────
+  if (isMobile) return <MobileFallback />;
+
+  return (
+    <div style={{
+      background: T.bg,
+      backgroundImage: SCANLINES,
+      minHeight: '100vh',
+      fontFamily: T.font,
+      position: 'relative',
+      overflow: 'hidden',
+    }}>
+      <GlobalHeader
+        autoRefresh={autoRefresh}
+        onToggleAutoRefresh={() => setAutoRefresh(v => !v)}
+        countdown={countdown}
+        batchProgress={batchProgress}
+      />
+
+      <div style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}>
+
+        <TerminalPanel {...panelProps('syscfg')} title="[SYS.CFG] INVESTOR PROFILE">
+          <SysCfgPanel profile={profile} setProfile={setProfile} />
+        </TerminalPanel>
+
+        <TerminalPanel {...panelProps('mktin')} title="[MKT.IN] WATCHLIST">
+          <WatchlistPanel
+            watchlist={watchlist}
+            setWatchlist={setWatchlist}
+            isRunning={batchProgress.running}
+            onAnalyzeAll={() => analyzeAll(watchlist, profile)}
+            batchProgress={batchProgress}
+            assetData={assetData}
+          />
+        </TerminalPanel>
+
+        <TerminalPanel {...panelProps('prcdat')} title={`[PRC.DAT] ${selectedAsset || 'PRICE DATA'}`}>
+          <PrcDatPanel tech={selectedTech} ticker={selectedAsset || ''} />
+        </TerminalPanel>
+
+        <TerminalPanel {...panelProps('anlytcs')} title="[ANLYTCS] MULTI-ASSET TABLE">
+          <MultiAssetTable
+            assetData={assetData}
+            watchlist={watchlist}
+            profile={profile}
+            selectedAsset={selectedAsset}
+            onSelectAsset={setSelectedAsset}
+          />
+        </TerminalPanel>
+
+        <TerminalPanel {...panelProps('sigout')} title={`[SIG.OUT] ${selectedAsset ? `SIGNAL — ${selectedAsset}` : 'SIGNAL OUTPUT'}`}>
+          <SigOutPanel
+            assetEntry={selectedAssetEntry}
+            profile={profile}
+          />
+        </TerminalPanel>
+
+        <TerminalPanel {...panelProps('prtsum')} title="[PRT.SUM] PORTFOLIO SUMMARY">
+          <PortfolioSummaryPanel
+            assetData={assetData}
+            watchlist={watchlist}
+            profile={profile}
+          />
+        </TerminalPanel>
+
+      </div>
+    </div>
+  );
+}
