@@ -574,7 +574,7 @@ function GlobalHeader({ autoRefresh }) {
   return (
     <div style={{
       position: 'fixed', top: 0, left: 0, right: 0, height: HEADER_H,
-      zIndex: 9999, background: T.bg,
+      zIndex: 9999, background: T.bgHeader,
       borderBottom: `1px solid rgba(255,255,255,0.2)`,
       fontFamily: T.font, display: 'flex', flexDirection: 'column',
       justifyContent: 'center', padding: '0 20px',
