@@ -8,6 +8,12 @@
 
 ---
 
+## ⚠️ Directorio destino (importante)
+
+Ya existe un MVP funcionando en la raíz del proyecto (`InvestmentAdvisor.jsx`, `api/`, etc.). Esta implementación es **desde cero** y NO debe pisarlo. Construir TODO lo nuevo dentro de una subcarpeta limpia: **`/v2/`**. El MVP viejo queda intacto como referencia. Todas las rutas de la sección "Estructura de archivos" cuelgan de `/v2/`.
+
+---
+
 ## 0. Convenciones y stack
 
 - **Stack:** React 18 + Vite, Tailwind (solo spacing), Recharts, funciones serverless en `/api` (deploy Vercel).
