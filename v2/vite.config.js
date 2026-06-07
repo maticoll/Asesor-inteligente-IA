@@ -1,5 +1,6 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
+import path from 'path';
 
 // Adapta res de Node.js al contrato Vercel/Express usado en api/*.js
 function wrapRes(nodeRes) {
@@ -55,6 +56,11 @@ function vercelApiPlugin() {
 
 export default defineConfig({
   plugins: [react(), vercelApiPlugin()],
+  resolve: {
+    alias: {
+      '@': path.resolve(import.meta.dirname, './src'),
+    },
+  },
   server: {
     port: 3000,
     open: true,
