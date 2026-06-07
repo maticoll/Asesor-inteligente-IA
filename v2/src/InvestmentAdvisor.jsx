@@ -7,6 +7,7 @@ import {
   AreaChart, Area, XAxis, YAxis, Tooltip,
   CartesianGrid, ResponsiveContainer,
 } from 'recharts';
+import { Component as StockMarketTrackerChart } from './components/ui/stock-market-tracker-chart.tsx';
 
 // ── Fetchers ──────────────────────────────────────────────────────────────────
 
@@ -423,8 +424,11 @@ export default function InvestmentAdvisor() {
 
           {/* Placeholder inicial */}
           {!done && !loading && (
-            <div className="flex items-center justify-center h-64 text-gray-600 text-sm">
-              Ingresá un ticker y presioná ▶ para analizar
+            <div className="flex flex-col items-center gap-6 pt-8">
+              <StockMarketTrackerChart />
+              <p className="text-gray-600 text-sm">
+                Ingresá un ticker y presioná ▶ para analizar
+              </p>
             </div>
           )}
 
