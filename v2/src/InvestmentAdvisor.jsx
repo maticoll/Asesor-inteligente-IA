@@ -120,17 +120,11 @@ function MobileFallback() {
 // ── Componente principal ──────────────────────────────────────────────────────
 
 export default function InvestmentAdvisor() {
-  // Mobile detection
+  // ── Todos los hooks van ANTES de cualquier return condicional (Rules of Hooks) ──
+
   const [isMobile, setIsMobile] = useState(
     typeof window !== 'undefined' ? window.innerWidth < 900 : false,
   );
-  useEffect(() => {
-    const handler = () => setIsMobile(window.innerWidth < 900);
-    window.addEventListener('resize', handler);
-    return () => window.removeEventListener('resize', handler);
-  }, []);
-
-  if (isMobile) return <MobileFallback />;
   const [ticker,    setTicker]    = useState('AAPL');
   const [loading,   setLoading]   = useState(false);
   const [yahooData, setYahooData] = useState(null);
@@ -153,6 +147,12 @@ export default function InvestmentAdvisor() {
   const [results, setResults] = useState({
     technical: null, fundamental: null, risk: null, orchestrator: null,
   });
+
+  useEffect(() => {
+    const handler = () => setIsMobile(window.innerWidth < 900);
+    window.addEventListener('resize', handler);
+    return () => window.removeEventListener('resize', handler);
+  }, []);
 
   const setAgentState  = (a, s) => setAgentStates(p  => ({ ...p, [a]: s }));
   const setAgentStatus = (a, m) => setStatusMessages(p => ({ ...p, [a]: m }));
@@ -261,6 +261,9 @@ export default function InvestmentAdvisor() {
 
     setLoading(false);
   }, [ticker, profile]);
+
+  // Return condicional después de todos los hooks (Rules of Hooks)
+  if (isMobile) return <MobileFallback />;
 
   const tech  = results.technical;
   const fund  = results.fundamental;
