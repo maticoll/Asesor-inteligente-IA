@@ -3,10 +3,6 @@ import { runTechnicalAgent }    from './agents/technical.js';
 import { runFundamentalAgent }  from './agents/fundamental.js';
 import { runRiskAgent }         from './agents/risk.js';
 import { runOrchestratorAgent } from './agents/orchestrator.js';
-import {
-  AreaChart, Area, XAxis, YAxis, Tooltip,
-  CartesianGrid, ResponsiveContainer,
-} from 'recharts';
 import { Component as StockMarketTrackerChart } from './components/ui/stock-market-tracker-chart.tsx';
 
 // ── Fetchers ──────────────────────────────────────────────────────────────────
@@ -272,21 +268,7 @@ export default function InvestmentAdvisor() {
   const orch  = results.orchestrator;
   const done  = orch != null;
 
-  // Datos del gráfico: últimos 60 cierres
-  const chartData = (() => {
-    const closes = tech?.closes ?? yahooData?.closes ?? [];
-    const dates  = yahooData?.dates ?? [];
-    const n      = Math.min(60, closes.length);
-    const slice  = closes.slice(-n);
-    const dSlice = dates.slice(-n);
-    return slice.map((price, i) => ({
-      price: parseFloat(price.toFixed(2)),
-      date:  dSlice[i] ? dSlice[i].slice(0, 10) : `D-${n - i}`,
-    }));
-  })();
-
-  const chartUp    = chartData.length >= 2 && chartData[chartData.length - 1].price >= chartData[0].price;
-  const chartColor = chartUp ? '#4ade80' : '#f87171';
+  const hasChartData = (yahooData?.closes?.length ?? 0) > 1;
 
   // ── Render ────────────────────────────────────────────────────────────────
 
@@ -425,52 +407,26 @@ export default function InvestmentAdvisor() {
           {/* Placeholder inicial */}
           {!done && !loading && (
             <div className="flex flex-col items-center gap-6 pt-8">
-              <StockMarketTrackerChart />
+              <div className="dark">
+                <StockMarketTrackerChart />
+              </div>
               <p className="text-gray-600 text-sm">
                 Ingresá un ticker y presioná ▶ para analizar
               </p>
             </div>
           )}
 
-          {/* Gráfico de precio */}
-          {chartData.length > 1 && (
-            <section className="bg-gray-900 border border-gray-800 rounded-lg p-5">
-              <h2 className="text-xs text-gray-400 uppercase tracking-widest mb-4">
-                Precio — últimas {chartData.length} sesiones
-              </h2>
-              <ResponsiveContainer width="100%" height={200}>
-                <AreaChart data={chartData} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
-                  <defs>
-                    <linearGradient id="priceGrad" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%"  stopColor={chartColor} stopOpacity={0.25} />
-                      <stop offset="95%" stopColor={chartColor} stopOpacity={0.02} />
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" />
-                  <XAxis
-                    dataKey="date"
-                    tick={{ fontSize: 10, fill: '#6b7280' }}
-                    interval={Math.floor(chartData.length / 5)}
-                  />
-                  <YAxis
-                    tick={{ fontSize: 10, fill: '#6b7280' }}
-                    domain={['auto', 'auto']}
-                    width={60}
-                  />
-                  <Tooltip
-                    contentStyle={{ background: '#111827', border: '1px solid #374151', fontSize: 11 }}
-                    labelStyle={{ color: '#9ca3af' }}
-                    formatter={v => [`$${v}`, 'Precio']}
-                  />
-                  <Area
-                    type="monotone" dataKey="price"
-                    stroke={chartColor} strokeWidth={2}
-                    fill="url(#priceGrad)"
-                    dot={false}
-                  />
-                </AreaChart>
-              </ResponsiveContainer>
-            </section>
+          {/* Gráfico de precio con selector de período */}
+          {hasChartData && (
+            <div className="dark">
+              <StockMarketTrackerChart
+                ticker={yahooData?.ticker}
+                closes={yahooData?.closes ?? []}
+                dates={yahooData?.dates ?? []}
+                currentPrice={yahooData?.currentPrice}
+                className="max-w-none rounded-lg"
+              />
+            </div>
           )}
 
           {/* Panel de métricas: 3 columnas */}
