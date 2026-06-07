@@ -23,6 +23,9 @@ function filterNulls(closes, ...arrays) {
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Content-Type', 'application/json');
+  // Deshabilitar cache de Vercel CDN — los datos de mercado deben ser frescos
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+  res.setHeader('Pragma', 'no-cache');
 
   const ticker = (req.query.ticker || '').toUpperCase().trim();
   if (!ticker) {
@@ -39,8 +42,11 @@ export default async function handler(req, res) {
     upstream = await fetch(url, {
       signal: controller.signal,
       headers: {
-        Accept: 'application/json',
-        'User-Agent': 'Mozilla/5.0 (compatible; mvp-investment-advisor/2.0)',
+        Accept:          'application/json',
+        'User-Agent':    'Mozilla/5.0 (compatible; mvp-investment-advisor/2.0)',
+        // Evitar que Yahoo devuelva 304 (sin body) — pedir siempre respuesta fresca
+        'Cache-Control': 'no-cache',
+        'Pragma':        'no-cache',
       },
     });
     clearTimeout(timeoutId);
