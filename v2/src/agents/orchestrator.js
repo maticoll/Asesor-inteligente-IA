@@ -19,8 +19,9 @@ const AGENT_WEIGHTS = {
 
 // ── System prompt del orquestador ────────────────────────────────────────────
 export const SYSTEM_PROMPT = `Eres el orquestador de un sistema de asesoría de inversiones.
-Recibes los resultados de tres agentes especializados (técnico, fundamental, riesgo) y el perfil
-del inversor. Tu tarea es sintetizar una recomendación personalizada y justificada.
+Recibes los resultados de tres agentes especializados (técnico, fundamental, riesgo), el perfil
+del inversor y el precio actual de la acción. Tu tarea es sintetizar una recomendación personalizada
+y justificada.
 
 IMPORTANTE: Este sistema produce INFORMACIÓN para la decisión del usuario, NO asesoría financiera,
 y NO ejecuta órdenes. Aclararlo siempre en justification_multicriteria.
@@ -59,9 +60,13 @@ REGLAS OBLIGATORIAS
    portfolio_weight debe ser <= max_weight_pct del agente de riesgo.
    Si no hay datos de riesgo, usa un máximo de 5%.
 
-5. COHERENCIA DE PRECIOS:
-   price_target y stop_loss deben ser coherentes con el precio actual y la volatilidad.
-   Si no hay precio disponible o los datos son insuficientes, devuelve null.
+5. COHERENCIA DE PRECIOS (OBLIGATORIO):
+   El contexto incluye "PRECIO ACTUAL (currentPrice)". Usá ese valor como ancla:
+   - price_target debe estar entre currentPrice × 0.90 y currentPrice × 2.0 para una posición
+     típica (ajustá según horizonte y volatilidad del agente técnico).
+   - stop_loss debe estar por DEBAJO de currentPrice y dentro de un rango razonable dado por
+     la volatilidad anualizada (ej. currentPrice × (1 − volatilidad_anualizada × 0.5) como piso).
+   - Si currentPrice es null o los datos son insuficientes, devuelve null en ambos campos.
 
 6. AGENTES NO DISPONIBLES:
    Si un agente reporta error o datos ausentes, reduce confidence_score en 15 puntos
@@ -93,8 +98,12 @@ El JSON debe tener exactamente estos campos:
 
 function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
 
-/** Construye el mensaje de usuario con el contexto de los 3 agentes */
-function buildUserMessage(techResult, fundResult, riskResult, profile) {
+/** Construye el mensaje de usuario con el contexto de los 3 agentes (exportado para tests) */
+export function buildUserMessageForTest(techResult, fundResult, riskResult, profile, currentPrice) {
+  return buildUserMessage(techResult, fundResult, riskResult, profile, currentPrice);
+}
+
+function buildUserMessage(techResult, fundResult, riskResult, profile, currentPrice) {
   const lines = [];
   lines.push('=== PERFIL DEL INVERSOR ===');
   lines.push(JSON.stringify({
@@ -103,9 +112,14 @@ function buildUserMessage(techResult, fundResult, riskResult, profile) {
     horizon:      profile?.horizon ?? 'medium',
   }, null, 2));
 
+  lines.push('\n=== PRECIO ACTUAL (currentPrice) ===');
+  lines.push(currentPrice != null ? String(currentPrice) : 'null — no disponible');
+
   lines.push('\n=== RESULTADO AGENTE TÉCNICO ===');
   if (techResult && !techResult._error) {
-    lines.push(JSON.stringify(techResult, null, 2));
+    // Excluir closes[] — el LLM no necesita la serie completa de precios
+    const { closes: _closes, ...techForLLM } = techResult;
+    lines.push(JSON.stringify(techForLLM, null, 2));
   } else {
     lines.push('ERROR: el agente técnico no está disponible. ' +
       (techResult?._error || 'Datos ausentes.'));
@@ -254,11 +268,12 @@ async function callClaude(messages, maxTokens = 2048) {
 // ── Agente principal ──────────────────────────────────────────────────────────
 
 /**
- * @param {object} techResult   - Salida de runTechnicalAgent (o null si error)
- * @param {object} fundResult   - Salida de runFundamentalAgent (o null si error)
- * @param {object} riskResult   - Salida de runRiskAgent
- * @param {object} profile      - { capital, risk_profile, horizon }
+ * @param {object} techResult    - Salida de runTechnicalAgent (o null si error)
+ * @param {object} fundResult    - Salida de runFundamentalAgent (o null si error)
+ * @param {object} riskResult    - Salida de runRiskAgent
+ * @param {object} profile       - { capital, risk_profile, horizon }
  * @param {function} [onStatus]
+ * @param {number|null} [currentPrice] - Último precio de cierre de Yahoo Finance
  * @returns {Promise<OrchestratorResult>}
  */
 export async function runOrchestratorAgent(
@@ -267,10 +282,11 @@ export async function runOrchestratorAgent(
   riskResult,
   profile = {},
   onStatus = () => {},
+  currentPrice = null,
 ) {
   onStatus('Consultando al orquestador...');
 
-  const userContent = buildUserMessage(techResult, fundResult, riskResult, profile);
+  const userContent = buildUserMessage(techResult, fundResult, riskResult, profile, currentPrice);
   const messages    = [{ role: 'user', content: userContent }];
 
   let raw = null;

@@ -175,6 +175,8 @@ export default function InvestmentAdvisor() {
 
     if (!yahoo._error) setYahooData(yahoo);
 
+    const currentPrice = yahoo?.closes?.at(-1) ?? null;
+
     // Técnico
     let techResult;
     if (yahoo._error) {
@@ -241,6 +243,7 @@ export default function InvestmentAdvisor() {
         riskResult?._error  ? null : riskResult,
         profile,
         m => setAgentStatus('orchestrator', m),
+        currentPrice,
       );
       setAgentState('orchestrator', 'ready');
     } catch (err) {

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { runOrchestratorAgent, SYSTEM_PROMPT } from './orchestrator.js';
+import { runOrchestratorAgent, SYSTEM_PROMPT, buildUserMessageForTest } from './orchestrator.js';
 
 // ── Datos de prueba ────────────────────────────────────────────────────────────
 
@@ -251,6 +251,43 @@ describe('runOrchestratorAgent', () => {
     expect(SYSTEM_PROMPT).toContain('HOLD DE PRIMERA CLASE');
     expect(SYSTEM_PROMPT).toContain('CONFIRMACIÓN MÍNIMA');
     expect(SYSTEM_PROMPT).toContain('NO asesoría financiera');
+  });
+
+  it('A2: buildUserMessage NO incluye el array closes[] en el mensaje al LLM', () => {
+    const msg = buildUserMessageForTest(TECH_BUY, FUND_BUY, RISK_LOW, PROFILE_MEDIUM, 170);
+    // El mensaje no debe contener el array closes literal del techResult
+    // (el campo "closes" no debe aparecer como clave JSON en el contexto técnico)
+    const techSection = msg.split('=== RESULTADO AGENTE TÉCNICO ===')[1]?.split('===')[0] ?? '';
+    expect(techSection).not.toContain('"closes"');
+  });
+
+  it('A3: buildUserMessage incluye currentPrice en el contexto', () => {
+    const msg = buildUserMessageForTest(TECH_BUY, FUND_BUY, RISK_LOW, PROFILE_MEDIUM, 182.5);
+    expect(msg).toContain('PRECIO ACTUAL');
+    expect(msg).toContain('182.5');
+  });
+
+  it('A3: buildUserMessage con currentPrice null indica no disponible', () => {
+    const msg = buildUserMessageForTest(TECH_BUY, FUND_BUY, RISK_LOW, PROFILE_MEDIUM, null);
+    expect(msg).toContain('PRECIO ACTUAL');
+    expect(msg).toContain('null');
+  });
+
+  it('A2+A3: runOrchestratorAgent acepta currentPrice como 6to parámetro', async () => {
+    const mockResponse = makeCloudeResponse({
+      final_action: 'buy', confidence_score: 75, horizon: 'medium',
+      price_target: 190, stop_loss: 165, portfolio_weight: 7,
+      contradiction_detected: false,
+      agent_weights: { technical: 0.40, fundamental: 0.35, risk: 0.25 },
+      justification_multicriteria: 'Buy con precio ancla 175.',
+    });
+    fetch.mockResolvedValue({ json: async () => mockResponse });
+
+    const result = await runOrchestratorAgent(
+      TECH_BUY, FUND_BUY, RISK_LOW, PROFILE_MEDIUM, () => {}, 175,
+    );
+    expect(result.final_action).toBe('buy');
+    expect(result.price_target).toBe(190);
   });
 
   it('agent_weights inyectados por código corresponden al horizonte del perfil', async () => {
