@@ -281,7 +281,7 @@ export default function InvestmentAdvisor() {
       {/* HEADER */}
       <header className="border-b border-gray-800 px-6 py-3 flex items-center justify-between">
         <span className="flex items-center gap-2 text-blue-300 font-bold tracking-wide text-sm">
-          <img src="/stockwise_icon_only.png" alt="StockWise" className="h-5 w-5 object-contain" />
+          <img src="/stockwise_icon_only.png" alt="StockWise" className="h-8 w-8 object-contain" />
           StockWise
         </span>
         <span className="text-xs text-gray-600">
