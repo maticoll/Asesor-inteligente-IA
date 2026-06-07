@@ -113,14 +113,19 @@ export function calcMACD(closes, fast = 12, slow = 26, sig = 9) {
 
   if (macdLine.length < sig) return null;
   const signalLine = calcEMA(macdLine, sig);
-  const offset2 = macdLine.length - signalLine.length;
   const lastMacd = macdLine[macdLine.length - 1];
   const lastSig  = signalLine[signalLine.length - 1];
+
+  // hist_prev: histograma de la barra anterior; null si no hay suficiente historia
+  const prevMacd = macdLine.length >= 2 ? macdLine[macdLine.length - 2] : null;
+  const prevSig  = signalLine.length >= 2 ? signalLine[signalLine.length - 2] : null;
+  const hist_prev = (prevMacd != null && prevSig != null) ? prevMacd - prevSig : null;
 
   return {
     line:       lastMacd,
     signal:     lastSig,
     hist:       lastMacd - lastSig,
+    hist_prev,
     above_zero: lastMacd > 0,
   };
 }

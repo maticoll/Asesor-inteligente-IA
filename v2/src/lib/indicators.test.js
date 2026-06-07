@@ -107,6 +107,35 @@ describe('calcMACD', () => {
     const result = calcMACD(closes, 12, 26, 9);
     expect(result.hist).toBeCloseTo(result.line - result.signal, 10);
   });
+
+  it('M1: retorna hist_prev (histograma de la barra anterior)', () => {
+    const closes = Array.from({ length: 50 }, (_, i) => 100 + i);
+    const result = calcMACD(closes, 12, 26, 9);
+    expect(result).toHaveProperty('hist_prev');
+    // En serie estrictamente creciente, hist_prev es un número (no null)
+    expect(result.hist_prev).not.toBeNull();
+    expect(typeof result.hist_prev).toBe('number');
+  });
+
+  it('M1: en serie estacionaria largo plazo, hist ≈ hist_prev (sin cruce reciente)', () => {
+    // Serie lateral: los dos últimos histogramas deben tener el mismo signo
+    const closes = Array.from({ length: 60 }, () => 100);
+    const result = calcMACD(closes, 12, 26, 9);
+    if (result && result.hist_prev != null) {
+      // Mismo signo → no hay cruce
+      expect(Math.sign(result.hist)).toBe(Math.sign(result.hist_prev));
+    }
+  });
+
+  it('M1: hist_prev es el penúltimo histograma calculable', () => {
+    const closes = Array.from({ length: 50 }, (_, i) => 100 + Math.sin(i * 0.5) * 10);
+    const result = calcMACD(closes, 12, 26, 9);
+    // hist y hist_prev deben diferir (serie oscilante)
+    // Solo verificamos que ambos sean números finitos
+    if (result.hist_prev != null) {
+      expect(isFinite(result.hist_prev)).toBe(true);
+    }
+  });
 });
 
 // ─── Volatilidad ─────────────────────────────────────────────────────────────

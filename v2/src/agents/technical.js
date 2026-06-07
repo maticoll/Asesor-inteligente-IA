@@ -82,10 +82,12 @@ export async function runTechnicalAgent(yahooData, onStatus = () => {}) {
     ? (closes[closes.length - 1] > sma200 ? 'above' : 'below')
     : 'unknown';
 
-  // MACD cruce de señal (histograma cambia de signo)
-  // Aproximación: hist > 0 y creciendo → cruce alcista reciente
-  const macdCrossUp   = macd && macd.hist > 0 && macd.line > macd.signal;
-  const macdCrossDown = macd && macd.hist < 0 && macd.line < macd.signal;
+  // Cruce real de MACD: cambio de signo del histograma entre las dos últimas barras.
+  // macdCrossUp  = histograma pasó de negativo (o cero) a positivo → señal de compra.
+  // macdCrossDown = histograma pasó de positivo (o cero) a negativo → señal de venta.
+  // Si hist_prev es null (no hay barra anterior), no se detecta cruce.
+  const macdCrossUp   = macd?.hist_prev != null && macd.hist_prev < 0 && macd.hist > 0;
+  const macdCrossDown = macd?.hist_prev != null && macd.hist_prev > 0 && macd.hist < 0;
 
   onStatus('Aplicando reglas por régimen...');
 

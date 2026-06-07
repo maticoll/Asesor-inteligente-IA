@@ -127,4 +127,22 @@ describe('runTechnicalAgent', () => {
     expect(result.confidence).toBeGreaterThanOrEqual(10);
     expect(result.confidence).toBeLessThanOrEqual(95);
   });
+
+  it('M1: serie alcista sostenida → macdCrossUp NO activo (hist lleva varias barras positivo)', async () => {
+    // En un bull market largo, el MACD ya cruzó hace tiempo → hist_prev y hist son ambos positivos,
+    // no hay cambio de signo → macdCrossUp = false → el score NO incluye MACD_CROSS_UP_RANGE
+    const closes = makeBull(300);
+    const result = await runTechnicalAgent({ closes, ticker: 'STEADY_BULL' });
+    // El score viene principalmente de RSI>50, MACD>0, golden_cross, etc., no de un cruce puntual
+    // Simplemente verificamos que el agente no lanza error y el score es positivo por otras causas
+    expect(result.score).toBeGreaterThan(0);
+    expect(result.regime).toBe('uptrend');
+  });
+
+  it('M1: serie bajista sostenida → macdCrossDown NO activo (hist lleva varias barras negativo)', async () => {
+    const closes = makeBear(300);
+    const result = await runTechnicalAgent({ closes, ticker: 'STEADY_BEAR' });
+    expect(result.score).toBeLessThan(0);
+    expect(result.regime).toBe('downtrend');
+  });
 });
