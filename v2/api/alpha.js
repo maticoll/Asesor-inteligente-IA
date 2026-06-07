@@ -9,14 +9,34 @@
  *   fcf, fcf_yield, debt_to_equity, beta, market_cap }
  *
  * Notas de normalización:
- * - ReturnOnEquityTTM y QuarterlyEarningsGrowthYOY vienen como fracción directa
- *   (ej. "1.415" = ROE 141.5% para AAPL), no como porcentaje. Se pasan tal cual.
- * - fcf, fcf_yield y debt_to_equity no están disponibles en OVERVIEW (solo en
- *   BALANCE_SHEET / CASH_FLOW). Se devuelven como null, lo que el contrato permite.
- * - TrailingPE fallback a PERatio si no disponible.
- * - "None" o string vacío → null en todos los campos numéricos.
+ * - ReturnOnEquityTTM y QuarterlyEarningsGrowthYOY vienen como fracción directa.
+ * - fcf = operatingCashflow - capitalExpenditures (CASH_FLOW anual[0]).
+ * - debt_to_equity = totalLiabilities / totalShareholderEquity (BALANCE_SHEET anual[0]).
+ * - Cache en memoria por ticker, ~12 h de validez (los fundamentales no cambian intradiario).
+ * - Si BALANCE_SHEET o CASH_FLOW fallan/rate-limit, devuelven null sin romper el flujo.
  * Ref: INVESTIGACION_CRITERIOS_INVERSION.md — Parte B
  */
+
+// ── Cache en memoria ───────────────────────────────────────────────────────────
+
+const CACHE = new Map();
+const CACHE_TTL_MS = 12 * 60 * 60 * 1000; // 12 horas
+
+function cacheGet(ticker) {
+  const entry = CACHE.get(ticker);
+  if (!entry) return null;
+  if (Date.now() - entry.ts > CACHE_TTL_MS) {
+    CACHE.delete(ticker);
+    return null;
+  }
+  return entry.data;
+}
+
+function cacheSet(ticker, data) {
+  CACHE.set(ticker, { ts: Date.now(), data });
+}
+
+// ── Helpers de parseo ──────────────────────────────────────────────────────────
 
 function parseNum(val) {
   if (val == null || val === 'None' || val === '-' || val === '') return null;
@@ -29,6 +49,51 @@ function parseInt10(val) {
   const n = parseInt(val, 10);
   return isNaN(n) ? null : n;
 }
+
+function isRateLimited(raw) {
+  return !!(raw?.Note || raw?.Information);
+}
+
+// ── Funciones puras de cálculo (exportadas para tests) ────────────────────────
+
+/**
+ * FCF = operatingCashflow - capitalExpenditures del reporte anual más reciente.
+ * Devuelve null si faltan campos o el reporte está vacío.
+ */
+export function calcFCF(cashReport) {
+  if (!cashReport || typeof cashReport !== 'object') return null;
+  const op  = parseNum(cashReport.operatingCashflow);
+  const cap = parseNum(cashReport.capitalExpenditures);
+  if (op == null || cap == null) return null;
+  return op - cap;
+}
+
+/**
+ * D/E = totalLiabilities / totalShareholderEquity del balance anual más reciente.
+ * Devuelve null si equity es 0, negativo o faltan campos.
+ */
+export function calcDebtToEquity(balanceReport) {
+  if (!balanceReport || typeof balanceReport !== 'object') return null;
+  const liabilities = parseNum(balanceReport.totalLiabilities);
+  const equity      = parseNum(balanceReport.totalShareholderEquity);
+  if (liabilities == null || equity == null || equity <= 0) return null;
+  return liabilities / equity;
+}
+
+// ── Fetch con manejo de rate-limit ─────────────────────────────────────────────
+
+async function safeFetch(url) {
+  try {
+    const res = await fetch(url, { headers: { Accept: 'application/json' } });
+    const json = await res.json();
+    if (isRateLimited(json)) return { _rateLimited: true };
+    return json;
+  } catch {
+    return { _error: true };
+  }
+}
+
+// ── Handler principal ──────────────────────────────────────────────────────────
 
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -45,48 +110,62 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'Falta parámetro: ticker' });
   }
 
+  // Cache hit → devolver sin gastar API calls
+  const cached = cacheGet(ticker);
+  if (cached) return res.status(200).json(cached);
+
   const apiKey = process.env.ALPHA_VANTAGE_API_KEY;
   if (!apiKey) {
     return res.status(500).json({ error: 'ALPHA_VANTAGE_API_KEY no configurada en Vercel' });
   }
 
-  const url = `https://www.alphavantage.co/query?function=OVERVIEW&symbol=${ticker}&apikey=${apiKey}`;
+  const base = `https://www.alphavantage.co/query`;
 
-  let raw;
-  try {
-    const upstream = await fetch(url, {
-      headers: { Accept: 'application/json' },
-    });
-    raw = await upstream.json();
-  } catch (err) {
-    return res.status(502).json({ error: `Alpha Vantage proxy error: ${err.message}` });
+  // Tres fetches en paralelo para minimizar latencia
+  const [overview, balance, cashflow] = await Promise.all([
+    safeFetch(`${base}?function=OVERVIEW&symbol=${ticker}&apikey=${apiKey}`),
+    safeFetch(`${base}?function=BALANCE_SHEET&symbol=${ticker}&apikey=${apiKey}`),
+    safeFetch(`${base}?function=CASH_FLOW&symbol=${ticker}&apikey=${apiKey}`),
+  ]);
+
+  // OVERVIEW es obligatorio: si falla o rate-limit, devolver error
+  if (overview._error) {
+    return res.status(502).json({ error: 'Alpha Vantage proxy error al llamar OVERVIEW' });
   }
-
-  // Rate limit de Alpha Vantage
-  if (raw?.Note || raw?.Information) {
+  if (overview._rateLimited) {
     return res.status(429).json({ error: 'Alpha Vantage rate limit — intentá en 1 minuto' });
   }
-
-  // Ticker no encontrado: Alpha devuelve {} vacío
-  if (!raw?.Symbol) {
+  if (!overview?.Symbol) {
     return res.status(404).json({ error: 'ticker not found' });
   }
 
-  const marketCap = parseInt10(raw.MarketCapitalization);
+  const marketCap = parseInt10(overview.MarketCapitalization);
 
-  // fcf, fcf_yield y debt_to_equity no están en OVERVIEW → null (permitido por contrato)
-  return res.status(200).json({
+  // FCF y D/E: degradan a null si los endpoints auxiliares fallaron/rate-limited
+  const balanceReport  = balance?.annualReports?.[0]  ?? null;
+  const cashflowReport = cashflow?.annualReports?.[0] ?? null;
+
+  const fcf            = calcFCF(cashflowReport);
+  const debtToEquity   = calcDebtToEquity(balanceReport);
+  const fcfYield       = (fcf != null && marketCap != null && marketCap > 0)
+    ? fcf / marketCap
+    : null;
+
+  const result = {
     ticker,
-    sector:         raw.Sector || null,
-    pe_trailing:    parseNum(raw.TrailingPE) ?? parseNum(raw.PERatio),
-    pe_forward:     parseNum(raw.ForwardPE),
-    roe:            parseNum(raw.ReturnOnEquityTTM),            // fracción directa
-    peg:            parseNum(raw.PEGRatio),
-    eps_growth:     parseNum(raw.QuarterlyEarningsGrowthYOY),  // fracción directa
-    fcf:            null,   // no disponible en OVERVIEW
-    fcf_yield:      null,   // no disponible en OVERVIEW
-    debt_to_equity: null,   // no disponible en OVERVIEW
-    beta:           parseNum(raw.Beta),
+    sector:         overview.Sector || null,
+    pe_trailing:    parseNum(overview.TrailingPE) ?? parseNum(overview.PERatio),
+    pe_forward:     parseNum(overview.ForwardPE),
+    roe:            parseNum(overview.ReturnOnEquityTTM),
+    peg:            parseNum(overview.PEGRatio),
+    eps_growth:     parseNum(overview.QuarterlyEarningsGrowthYOY),
+    fcf:            fcf,
+    fcf_yield:      fcfYield,
+    debt_to_equity: debtToEquity,
+    beta:           parseNum(overview.Beta),
     market_cap:     marketCap,
-  });
+  };
+
+  cacheSet(ticker, result);
+  return res.status(200).json(result);
 }
