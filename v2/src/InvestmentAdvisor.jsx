@@ -1,10 +1,14 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { runTechnicalAgent }    from './agents/technical.js';
 import { runFundamentalAgent }  from './agents/fundamental.js';
 import { runRiskAgent }         from './agents/risk.js';
 import { runOrchestratorAgent } from './agents/orchestrator.js';
+import {
+  AreaChart, Area, XAxis, YAxis, Tooltip,
+  CartesianGrid, ResponsiveContainer,
+} from 'recharts';
 
-// ── Fetchers de datos ─────────────────────────────────────────────────────────
+// ── Fetchers ──────────────────────────────────────────────────────────────────
 
 async function fetchYahoo(ticker) {
   try {
@@ -19,7 +23,7 @@ async function fetchYahoo(ticker) {
 async function fetchAlpha(ticker) {
   try {
     const key = (typeof window !== 'undefined') && window.ENV?.ALPHA_VANTAGE_API_KEY;
-    const url  = key
+    const url = key
       ? `/api/alpha?ticker=${encodeURIComponent(ticker)}&apikey=${key}`
       : `/api/alpha?ticker=${encodeURIComponent(ticker)}`;
     const res = await fetch(url);
@@ -30,7 +34,7 @@ async function fetchAlpha(ticker) {
   }
 }
 
-// ── Colores y etiquetas ───────────────────────────────────────────────────────
+// ── Constantes de UI ──────────────────────────────────────────────────────────
 
 const STATE_LABEL = {
   idle:      'En espera',
@@ -41,24 +45,97 @@ const STATE_LABEL = {
 };
 
 const STATE_COLOR = {
-  idle:      'text-gray-500',
-  fetching:  'text-blue-400',
-  analyzing: 'text-yellow-400',
-  ready:     'text-green-400',
-  error:     'text-red-400',
+  idle:      'text-gray-500 border-gray-700',
+  fetching:  'text-blue-400  border-blue-700',
+  analyzing: 'text-yellow-400 border-yellow-700',
+  ready:     'text-green-400 border-green-700',
+  error:     'text-red-400   border-red-700',
 };
 
-const ACTION_STYLE = {
-  buy:  'bg-green-500/20 text-green-300 border border-green-500/40',
-  sell: 'bg-red-500/20 text-red-300 border border-red-500/40',
-  hold: 'bg-yellow-500/20 text-yellow-300 border border-yellow-500/40',
+const ACTION_BG = {
+  buy:  'bg-green-500/15 text-green-300 border-green-500/40',
+  sell: 'bg-red-500/15   text-red-300   border-red-500/40',
+  hold: 'bg-yellow-500/15 text-yellow-300 border-yellow-500/40',
 };
+
+const SIGNAL_DOT = {
+  buy:  'bg-green-400',
+  sell: 'bg-red-400',
+  hold: 'bg-yellow-400',
+};
+
+// ── ConfidenceRing SVG ────────────────────────────────────────────────────────
+
+function ConfidenceRing({ score = 0, size = 96 }) {
+  const r   = 38;
+  const cx  = size / 2;
+  const cy  = size / 2;
+  const circ = 2 * Math.PI * r;
+  const fill  = (score / 100) * circ;
+
+  const color = score >= 70 ? '#4ade80'   // green-400
+              : score >= 40 ? '#facc15'   // yellow-400
+              :               '#f87171';  // red-400
+
+  return (
+    <svg width={size} height={size} className="rotate-[-90deg]">
+      <circle cx={cx} cy={cy} r={r} fill="none" stroke="#374151" strokeWidth="8" />
+      <circle
+        cx={cx} cy={cy} r={r} fill="none"
+        stroke={color} strokeWidth="8"
+        strokeDasharray={`${fill} ${circ}`}
+        strokeLinecap="round"
+        style={{ transition: 'stroke-dasharray 0.5s ease' }}
+      />
+      <text
+        x={cx} y={cy + 1}
+        textAnchor="middle" dominantBaseline="middle"
+        fill={color}
+        fontSize="18" fontWeight="700" fontFamily="monospace"
+        style={{ transform: `rotate(90deg)`, transformOrigin: `${cx}px ${cy}px` }}
+      >
+        {score}%
+      </text>
+    </svg>
+  );
+}
+
+// ── MobileFallback ────────────────────────────────────────────────────────────
+
+function MobileFallback() {
+  return (
+    <div className="min-h-screen bg-gray-950 text-white font-mono flex items-center justify-center p-8">
+      <div className="text-center max-w-sm">
+        <div className="text-4xl mb-4">🖥</div>
+        <h1 className="text-lg font-bold text-blue-300 mb-3">Pantalla demasiado pequeña</h1>
+        <p className="text-sm text-gray-400 leading-relaxed">
+          Esta aplicación requiere un ancho mínimo de escritorio de 900 px.
+          Por favor, abrila desde una computadora o ampliá la ventana del navegador.
+        </p>
+      </div>
+    </div>
+  );
+}
 
 // ── Componente principal ──────────────────────────────────────────────────────
 
 export default function InvestmentAdvisor() {
-  const [ticker,  setTicker]  = useState('AAPL');
-  const [loading, setLoading] = useState(false);
+  // Mobile detection
+  const [isMobile, setIsMobile] = useState(
+    typeof window !== 'undefined' ? window.innerWidth < 900 : false,
+  );
+  useEffect(() => {
+    const handler = () => setIsMobile(window.innerWidth < 900);
+    window.addEventListener('resize', handler);
+    return () => window.removeEventListener('resize', handler);
+  }, []);
+
+  if (isMobile) return <MobileFallback />;
+  const [ticker,    setTicker]    = useState('AAPL');
+  const [loading,   setLoading]   = useState(false);
+  const [yahooData, setYahooData] = useState(null);
+  const [openAgent, setOpenAgent] = useState(null);
+
   const [profile, setProfile] = useState({
     capital:      100000,
     risk_profile: 'moderate',
@@ -66,70 +143,51 @@ export default function InvestmentAdvisor() {
   });
 
   const [agentStates, setAgentStates] = useState({
-    technical:    'idle',
-    fundamental:  'idle',
-    risk:         'idle',
-    orchestrator: 'idle',
+    technical: 'idle', fundamental: 'idle', risk: 'idle', orchestrator: 'idle',
   });
 
   const [statusMessages, setStatusMessages] = useState({
-    technical:    '',
-    fundamental:  '',
-    risk:         '',
-    orchestrator: '',
+    technical: '', fundamental: '', risk: '', orchestrator: '',
   });
 
   const [results, setResults] = useState({
-    technical:    null,
-    fundamental:  null,
-    risk:         null,
-    orchestrator: null,
+    technical: null, fundamental: null, risk: null, orchestrator: null,
   });
 
-  const [openAgent, setOpenAgent] = useState(null);  // for raw-data collapse
-
-  const setAgentState = (agent, state) =>
-    setAgentStates(prev => ({ ...prev, [agent]: state }));
-
-  const setAgentStatus = (agent, msg) =>
-    setStatusMessages(prev => ({ ...prev, [agent]: msg }));
-
-  const setAgentResult = (agent, result) =>
-    setResults(prev => ({ ...prev, [agent]: result }));
+  const setAgentState  = (a, s) => setAgentStates(p  => ({ ...p, [a]: s }));
+  const setAgentStatus = (a, m) => setStatusMessages(p => ({ ...p, [a]: m }));
+  const setAgentResult = (a, r) => setResults(p       => ({ ...p, [a]: r }));
 
   // ── Pipeline ─────────────────────────────────────────────────────────────────
 
   const runAnalysis = useCallback(async () => {
     if (!ticker.trim()) return;
     setLoading(true);
-
-    // Reset
+    setYahooData(null);
     setAgentStates({ technical: 'fetching', fundamental: 'fetching', risk: 'idle', orchestrator: 'idle' });
     setStatusMessages({ technical: '', fundamental: '', risk: '', orchestrator: '' });
     setResults({ technical: null, fundamental: null, risk: null, orchestrator: null });
 
-    // ── Fase 1: fetch paralelo ────────────────────────────────────────────────
     const [yahooSettled, alphaSettled] = await Promise.allSettled([
       fetchYahoo(ticker.trim().toUpperCase()),
       fetchAlpha(ticker.trim().toUpperCase()),
     ]);
 
-    const yahooData = yahooSettled.status === 'fulfilled' ? yahooSettled.value : { _error: 'fetch falló' };
-    const alphaData = alphaSettled.status === 'fulfilled' ? alphaSettled.value : { _error: 'fetch falló' };
+    const yahoo = yahooSettled.status === 'fulfilled' ? yahooSettled.value : { _error: 'fetch falló' };
+    const alpha = alphaSettled.status === 'fulfilled' ? alphaSettled.value : { _error: 'fetch falló' };
 
-    // ── Agente técnico ────────────────────────────────────────────────────────
+    if (!yahoo._error) setYahooData(yahoo);
+
+    // Técnico
     let techResult;
-    if (yahooData._error) {
+    if (yahoo._error) {
       setAgentState('technical', 'error');
-      setAgentStatus('technical', yahooData._error);
-      techResult = { _error: yahooData._error };
+      setAgentStatus('technical', yahoo._error);
+      techResult = { _error: yahoo._error };
     } else {
       setAgentState('technical', 'analyzing');
       try {
-        techResult = await runTechnicalAgent(
-          yahooData,
-          (msg) => setAgentStatus('technical', msg),
-        );
+        techResult = await runTechnicalAgent(yahoo, m => setAgentStatus('technical', m));
         setAgentState('technical', 'ready');
       } catch (err) {
         setAgentState('technical', 'error');
@@ -139,19 +197,16 @@ export default function InvestmentAdvisor() {
     }
     setAgentResult('technical', techResult);
 
-    // ── Agente fundamental ────────────────────────────────────────────────────
+    // Fundamental
     let fundResult;
-    if (alphaData._error) {
+    if (alpha._error) {
       setAgentState('fundamental', 'error');
-      setAgentStatus('fundamental', alphaData._error);
-      fundResult = { _error: alphaData._error };
+      setAgentStatus('fundamental', alpha._error);
+      fundResult = { _error: alpha._error };
     } else {
       setAgentState('fundamental', 'analyzing');
       try {
-        fundResult = await runFundamentalAgent(
-          alphaData,
-          (msg) => setAgentStatus('fundamental', msg),
-        );
+        fundResult = await runFundamentalAgent(alpha, m => setAgentStatus('fundamental', m));
         setAgentState('fundamental', 'ready');
       } catch (err) {
         setAgentState('fundamental', 'error');
@@ -161,62 +216,44 @@ export default function InvestmentAdvisor() {
     }
     setAgentResult('fundamental', fundResult);
 
-    // ── Agente de riesgo (sincrónico pero puede fallar) ───────────────────────
+    // Riesgo
     setAgentState('risk', 'analyzing');
     let riskResult;
     try {
-      // Si técnico falló, pasamos objeto vacío para que risk use fallbacks
-      const techForRisk = techResult?._error ? {} : techResult;
-      const fundForRisk = fundResult?._error ? {} : fundResult;
       riskResult = runRiskAgent(
-        techForRisk,
-        fundForRisk,
+        techResult?._error ? {} : techResult,
+        fundResult?._error ? {} : fundResult,
         profile,
-        (msg) => setAgentStatus('risk', msg),
+        m => setAgentStatus('risk', m),
       );
       setAgentState('risk', 'ready');
     } catch (err) {
       setAgentState('risk', 'error');
       setAgentStatus('risk', err.message);
-      // Fallback mínimo para que el orquestador pueda continuar
-      riskResult = {
-        _error:         err.message,
-        risk_level:     'medium',
-        max_weight_pct: 5,
-        score:          0,
-        beta:           1,
-        justification:  'Agente de riesgo no disponible.',
-      };
+      riskResult = { _error: err.message, risk_level: 'medium', max_weight_pct: 5, score: 0, beta: 1 };
     }
     setAgentResult('risk', riskResult);
 
-    // ── Orquestador ───────────────────────────────────────────────────────────
+    // Orquestador
     setAgentState('orchestrator', 'analyzing');
     let orchResult;
     try {
-      const techForOrch = techResult?._error  ? null : techResult;
-      const fundForOrch = fundResult?._error  ? null : fundResult;
-      const riskForOrch = riskResult?._error  ? null : riskResult;
       orchResult = await runOrchestratorAgent(
-        techForOrch,
-        fundForOrch,
-        riskForOrch,
+        techResult?._error  ? null : techResult,
+        fundResult?._error  ? null : fundResult,
+        riskResult?._error  ? null : riskResult,
         profile,
-        (msg) => setAgentStatus('orchestrator', msg),
+        m => setAgentStatus('orchestrator', m),
       );
       setAgentState('orchestrator', 'ready');
     } catch (err) {
       setAgentState('orchestrator', 'error');
       setAgentStatus('orchestrator', err.message);
       orchResult = {
-        final_action:               'hold',
-        confidence_score:           30,
-        horizon:                    profile.horizon,
-        price_target:               null,
-        stop_loss:                  null,
-        portfolio_weight:           0,
-        contradiction_detected:     true,
-        agent_weights:              { technical: 0.40, fundamental: 0.35, risk: 0.25 },
+        final_action: 'hold', confidence_score: 30, horizon: profile.horizon,
+        price_target: null, stop_loss: null, portfolio_weight: 0,
+        contradiction_detected: true,
+        agent_weights: { technical: 0.40, fundamental: 0.35, risk: 0.25 },
         justification_multicriteria: 'Error en el orquestador. Resultado de seguridad: hold.',
       };
     }
@@ -225,206 +262,452 @@ export default function InvestmentAdvisor() {
     setLoading(false);
   }, [ticker, profile]);
 
-  const orch   = results.orchestrator;
-  const anyResult = orch != null;
+  const tech  = results.technical;
+  const fund  = results.fundamental;
+  const risk  = results.risk;
+  const orch  = results.orchestrator;
+  const done  = orch != null;
+
+  // Datos del gráfico: últimos 60 cierres
+  const chartData = (() => {
+    const closes = tech?.closes ?? yahooData?.closes ?? [];
+    const dates  = yahooData?.dates ?? [];
+    const n      = Math.min(60, closes.length);
+    const slice  = closes.slice(-n);
+    const dSlice = dates.slice(-n);
+    return slice.map((price, i) => ({
+      price: parseFloat(price.toFixed(2)),
+      date:  dSlice[i] ? dSlice[i].slice(0, 10) : `D-${n - i}`,
+    }));
+  })();
+
+  const chartUp    = chartData.length >= 2 && chartData[chartData.length - 1].price >= chartData[0].price;
+  const chartColor = chartUp ? '#4ade80' : '#f87171';
 
   // ── Render ────────────────────────────────────────────────────────────────
 
   return (
-    <div className="min-h-screen bg-gray-950 text-white font-mono p-6 max-w-3xl mx-auto">
+    <div className="min-h-screen bg-gray-950 text-white font-mono flex flex-col">
 
-      {/* Título */}
-      <h1 className="text-xl font-bold text-blue-300 mb-6 tracking-wide">
-        Asesor de Inversiones — MVP v2
-      </h1>
+      {/* HEADER */}
+      <header className="border-b border-gray-800 px-6 py-3 flex items-center justify-between">
+        <span className="text-blue-300 font-bold tracking-wide text-sm">
+          ASESOR DE INVERSIONES v2
+        </span>
+        <span className="text-xs text-gray-600">
+          Información, no asesoría financiera
+        </span>
+      </header>
 
-      {/* ── Perfil e input ── */}
-      <section className="bg-gray-900 rounded-lg p-5 mb-5 border border-gray-800">
-        <h2 className="text-xs text-gray-400 uppercase tracking-widest mb-4">Perfil del inversor</h2>
+      {/* BODY */}
+      <div className="flex flex-1 overflow-hidden">
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
+        {/* SIDEBAR */}
+        <aside className="w-72 border-r border-gray-800 p-5 flex flex-col gap-5 overflow-y-auto">
+
+          {/* Ticker */}
+          <div>
+            <label className="text-xs text-gray-500 block mb-1">Ticker</label>
+            <div className="flex gap-2">
+              <input
+                type="text" placeholder="AAPL"
+                value={ticker}
+                onChange={e => setTicker(e.target.value.toUpperCase())}
+                onKeyDown={e => e.key === 'Enter' && !loading && runAnalysis()}
+                className="flex-1 bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm uppercase focus:outline-none focus:border-blue-500"
+              />
+              <button
+                onClick={runAnalysis}
+                disabled={loading || !ticker.trim()}
+                className="bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 disabled:text-gray-500 rounded px-3 py-2 text-sm font-bold transition-colors"
+              >
+                {loading ? '…' : '▶'}
+              </button>
+            </div>
+          </div>
+
           {/* Capital */}
-          <label className="flex flex-col gap-1">
-            <span className="text-xs text-gray-500">Capital (USD)</span>
+          <div>
+            <label className="text-xs text-gray-500 block mb-1">Capital (USD)</label>
             <input
               type="number" min="1000"
               value={profile.capital}
               onChange={e => setProfile(p => ({ ...p, capital: Number(e.target.value) }))}
-              className="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-blue-500"
+              className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-blue-500"
             />
-          </label>
-
-          {/* Ticker */}
-          <label className="flex flex-col gap-1">
-            <span className="text-xs text-gray-500">Ticker</span>
-            <input
-              type="text" placeholder="AAPL"
-              value={ticker}
-              onChange={e => setTicker(e.target.value.toUpperCase())}
-              onKeyDown={e => e.key === 'Enter' && !loading && runAnalysis()}
-              className="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm uppercase focus:outline-none focus:border-blue-500"
-            />
-          </label>
-        </div>
-
-        {/* Perfil de riesgo */}
-        <div className="flex gap-4 mb-3">
-          <span className="text-xs text-gray-500 w-24 self-center">Riesgo</span>
-          {['conservative', 'moderate', 'aggressive'].map(v => (
-            <label key={v} className="flex items-center gap-2 cursor-pointer text-sm">
-              <input
-                type="radio" name="risk_profile" value={v}
-                checked={profile.risk_profile === v}
-                onChange={() => setProfile(p => ({ ...p, risk_profile: v }))}
-                className="accent-blue-500"
-              />
-              {{ conservative: 'Conservador', moderate: 'Moderado', aggressive: 'Agresivo' }[v]}
-            </label>
-          ))}
-        </div>
-
-        {/* Horizonte */}
-        <div className="flex gap-4 mb-5">
-          <span className="text-xs text-gray-500 w-24 self-center">Horizonte</span>
-          {['short', 'medium', 'long'].map(v => (
-            <label key={v} className="flex items-center gap-2 cursor-pointer text-sm">
-              <input
-                type="radio" name="horizon" value={v}
-                checked={profile.horizon === v}
-                onChange={() => setProfile(p => ({ ...p, horizon: v }))}
-                className="accent-blue-500"
-              />
-              {{ short: 'Corto', medium: 'Medio', long: 'Largo' }[v]}
-            </label>
-          ))}
-        </div>
-
-        <button
-          onClick={runAnalysis}
-          disabled={loading || !ticker.trim()}
-          className="w-full bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 disabled:text-gray-500 text-white rounded px-4 py-2 text-sm font-bold transition-colors"
-        >
-          {loading ? 'Analizando...' : 'Analizar'}
-        </button>
-      </section>
-
-      {/* ── Estados de los agentes ── */}
-      <section className="bg-gray-900 rounded-lg p-5 mb-5 border border-gray-800">
-        <h2 className="text-xs text-gray-400 uppercase tracking-widest mb-4">Estado del pipeline</h2>
-        <div className="grid grid-cols-2 gap-3">
-          {[
-            ['technical',    'Técnico'],
-            ['fundamental',  'Fundamental'],
-            ['risk',         'Riesgo'],
-            ['orchestrator', 'Orquestador'],
-          ].map(([key, label]) => {
-            const state = agentStates[key];
-            const msg   = statusMessages[key];
-            return (
-              <div key={key} className="flex flex-col">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs text-gray-400">{label}</span>
-                  <span className={`text-xs ${STATE_COLOR[state]}`}>
-                    {STATE_LABEL[state]}
-                  </span>
-                </div>
-                {msg && (
-                  <span className="text-xs text-gray-600 truncate mt-0.5">{msg}</span>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      </section>
-
-      {/* ── Resultado final ── */}
-      {anyResult && (
-        <section className="bg-gray-900 rounded-lg p-5 mb-5 border border-gray-800">
-          <h2 className="text-xs text-gray-400 uppercase tracking-widest mb-4">Recomendación</h2>
-
-          <div className="flex items-center gap-4 mb-4">
-            <span className={`px-4 py-1 rounded text-lg font-bold uppercase tracking-widest ${ACTION_STYLE[orch.final_action] ?? ACTION_STYLE.hold}`}>
-              {orch.final_action}
-            </span>
-            <div className="flex flex-col">
-              <span className="text-xs text-gray-500">Confianza</span>
-              <span className="text-sm font-bold">{orch.confidence_score}%</span>
-            </div>
-            <div className="flex flex-col">
-              <span className="text-xs text-gray-500">Peso cartera</span>
-              <span className="text-sm font-bold">{orch.portfolio_weight?.toFixed(1)}%</span>
-            </div>
-            {orch.contradiction_detected && (
-              <span className="text-xs text-orange-400 border border-orange-400/40 rounded px-2 py-1">
-                Contradicción detectada
-              </span>
-            )}
           </div>
 
-          <div className="grid grid-cols-2 gap-3 mb-4">
-            <div className="bg-gray-800 rounded p-3">
-              <div className="text-xs text-gray-500 mb-1">Precio objetivo</div>
-              <div className="text-sm font-bold">
-                {orch.price_target != null ? `$${orch.price_target.toFixed(2)}` : 'N/D'}
-              </div>
-            </div>
-            <div className="bg-gray-800 rounded p-3">
-              <div className="text-xs text-gray-500 mb-1">Stop loss</div>
-              <div className="text-sm font-bold text-red-400">
-                {orch.stop_loss != null ? `$${orch.stop_loss.toFixed(2)}` : 'N/D'}
-              </div>
+          {/* Perfil de riesgo */}
+          <div>
+            <div className="text-xs text-gray-500 mb-2">Perfil de riesgo</div>
+            <div className="flex flex-col gap-2">
+              {[
+                ['conservative', 'Conservador'],
+                ['moderate',     'Moderado'],
+                ['aggressive',   'Agresivo'],
+              ].map(([v, lbl]) => (
+                <label key={v} className="flex items-center gap-2 cursor-pointer text-sm">
+                  <input
+                    type="radio" name="risk_profile" value={v}
+                    checked={profile.risk_profile === v}
+                    onChange={() => setProfile(p => ({ ...p, risk_profile: v }))}
+                    className="accent-blue-500"
+                  />
+                  {lbl}
+                </label>
+              ))}
             </div>
           </div>
 
-          {orch.agent_weights && (
-            <div className="flex gap-3 mb-4 text-xs text-gray-500">
-              <span>Pesos aplicados:</span>
-              <span>Técnico {(orch.agent_weights.technical * 100).toFixed(0)}%</span>
-              <span>Fundamental {(orch.agent_weights.fundamental * 100).toFixed(0)}%</span>
-              <span>Riesgo {(orch.agent_weights.risk * 100).toFixed(0)}%</span>
+          {/* Horizonte */}
+          <div>
+            <div className="text-xs text-gray-500 mb-2">Horizonte</div>
+            <div className="flex flex-col gap-2">
+              {[
+                ['short',  'Corto plazo'],
+                ['medium', 'Medio plazo'],
+                ['long',   'Largo plazo'],
+              ].map(([v, lbl]) => (
+                <label key={v} className="flex items-center gap-2 cursor-pointer text-sm">
+                  <input
+                    type="radio" name="horizon" value={v}
+                    checked={profile.horizon === v}
+                    onChange={() => setProfile(p => ({ ...p, horizon: v }))}
+                    className="accent-blue-500"
+                  />
+                  {lbl}
+                </label>
+              ))}
+            </div>
+          </div>
+
+          {/* Estado del pipeline */}
+          <div className="border-t border-gray-800 pt-4">
+            <div className="text-xs text-gray-500 mb-3 uppercase tracking-widest">Pipeline</div>
+            <div className="flex flex-col gap-2">
+              {[
+                ['technical',    'Técnico'],
+                ['fundamental',  'Fundamental'],
+                ['risk',         'Riesgo'],
+                ['orchestrator', 'Orquestador'],
+              ].map(([key, lbl]) => {
+                const state = agentStates[key];
+                const msg   = statusMessages[key];
+                return (
+                  <div key={key} className={`border rounded px-2 py-1.5 ${STATE_COLOR[state]}`}>
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs">{lbl}</span>
+                      <span className="text-xs">{STATE_LABEL[state]}</span>
+                    </div>
+                    {msg && <div className="text-xs text-gray-600 truncate mt-0.5">{msg}</div>}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {done && yahooData && (
+            <div className="border-t border-gray-800 pt-4 text-xs text-gray-600">
+              <div>{yahooData.ticker} · {yahooData.currency}</div>
+              <div>Precio: <span className="text-white">${yahooData.currentPrice?.toFixed(2)}</span></div>
+              <div>{yahooData.closes?.length ?? 0} sesiones cargadas</div>
+            </div>
+          )}
+        </aside>
+
+        {/* MAIN */}
+        <main className="flex-1 overflow-y-auto p-6 space-y-6">
+
+          {/* Placeholder inicial */}
+          {!done && !loading && (
+            <div className="flex items-center justify-center h-64 text-gray-600 text-sm">
+              Ingresá un ticker y presioná ▶ para analizar
             </div>
           )}
 
-          <div className="bg-gray-800 rounded p-3 text-sm text-gray-300 leading-relaxed">
-            {orch.justification_multicriteria}
-          </div>
-        </section>
-      )}
+          {/* Gráfico de precio */}
+          {chartData.length > 1 && (
+            <section className="bg-gray-900 border border-gray-800 rounded-lg p-5">
+              <h2 className="text-xs text-gray-400 uppercase tracking-widest mb-4">
+                Precio — últimas {chartData.length} sesiones
+              </h2>
+              <ResponsiveContainer width="100%" height={200}>
+                <AreaChart data={chartData} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
+                  <defs>
+                    <linearGradient id="priceGrad" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%"  stopColor={chartColor} stopOpacity={0.25} />
+                      <stop offset="95%" stopColor={chartColor} stopOpacity={0.02} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" />
+                  <XAxis
+                    dataKey="date"
+                    tick={{ fontSize: 10, fill: '#6b7280' }}
+                    interval={Math.floor(chartData.length / 5)}
+                  />
+                  <YAxis
+                    tick={{ fontSize: 10, fill: '#6b7280' }}
+                    domain={['auto', 'auto']}
+                    width={60}
+                  />
+                  <Tooltip
+                    contentStyle={{ background: '#111827', border: '1px solid #374151', fontSize: 11 }}
+                    labelStyle={{ color: '#9ca3af' }}
+                    formatter={v => [`$${v}`, 'Precio']}
+                  />
+                  <Area
+                    type="monotone" dataKey="price"
+                    stroke={chartColor} strokeWidth={2}
+                    fill="url(#priceGrad)"
+                    dot={false}
+                  />
+                </AreaChart>
+              </ResponsiveContainer>
+            </section>
+          )}
 
-      {/* ── Datos crudos por agente ── */}
-      {anyResult && (
-        <section className="bg-gray-900 rounded-lg p-5 mb-5 border border-gray-800">
-          <h2 className="text-xs text-gray-400 uppercase tracking-widest mb-4">Datos por agente</h2>
-          {[
-            ['technical',    'Técnico'],
-            ['fundamental',  'Fundamental'],
-            ['risk',         'Riesgo'],
-            ['orchestrator', 'Orquestador'],
-          ].map(([key, label]) => (
-            <div key={key} className="mb-2">
-              <button
-                className="w-full text-left text-xs text-gray-500 hover:text-gray-300 flex justify-between py-1"
-                onClick={() => setOpenAgent(o => o === key ? null : key)}
-              >
-                <span>{label}</span>
-                <span>{openAgent === key ? '▲' : '▼'}</span>
-              </button>
-              {openAgent === key && (
-                <pre className="bg-gray-800 rounded p-3 text-xs text-gray-400 overflow-x-auto mt-1 max-h-60 overflow-y-auto">
-                  {JSON.stringify(results[key], null, 2)}
-                </pre>
+          {/* Panel de métricas: 3 columnas */}
+          {done && (
+            <section className="bg-gray-900 border border-gray-800 rounded-lg p-5">
+              <h2 className="text-xs text-gray-400 uppercase tracking-widest mb-4">
+                Métricas por agente
+              </h2>
+              <div className="grid grid-cols-3 gap-4">
+
+                {/* Técnico */}
+                <AgentMetricsCard
+                  title="Técnico"
+                  signal={tech?.signal}
+                  score={tech?.score}
+                  confidence={tech?.confidence}
+                  rows={
+                    tech && !tech._error
+                      ? [
+                          ['RSI',      tech.indicators?.rsi?.toFixed(1) ?? 'N/D'],
+                          ['MACD',     tech.indicators?.macd?.line?.toFixed(2) ?? 'N/D'],
+                          ['SMA 50',   tech.indicators?.sma50?.toFixed(2)  ?? 'N/D'],
+                          ['SMA 200',  tech.indicators?.sma200?.toFixed(2) ?? 'N/D'],
+                          ['Régimen',  tech.regime ?? 'N/D'],
+                          ['Vol. anual', tech.indicators?.volatility_annual
+                            ? `${(tech.indicators.volatility_annual * 100).toFixed(1)}%`
+                            : 'N/D'],
+                        ]
+                      : null
+                  }
+                  error={tech?._error}
+                />
+
+                {/* Fundamental */}
+                <AgentMetricsCard
+                  title="Fundamental"
+                  signal={fund?.signal}
+                  score={fund?.score}
+                  confidence={fund?.confidence}
+                  rows={
+                    fund && !fund._error
+                      ? [
+                          ['Valuación',   fund.valuation ?? 'N/D'],
+                          ['Quality',     fund.quality_score != null ? `${fund.quality_score}/100` : 'N/D'],
+                          ['P/E vs sect', fund.metrics_vs_sector?.pe?.verdict ?? 'N/D'],
+                          ['ROE',         fund.metrics_vs_sector?.roe?.verdict ?? 'N/D'],
+                          ['PEG',         fund.metrics_vs_sector?.peg?.verdict ?? 'N/D'],
+                          ['Beta',        fund.beta?.toFixed(2) ?? 'N/D'],
+                        ]
+                      : null
+                  }
+                  error={fund?._error}
+                />
+
+                {/* Riesgo */}
+                <AgentMetricsCard
+                  title="Riesgo"
+                  signal={risk?.risk_level === 'low' ? 'buy' : risk?.risk_level === 'high' ? 'sell' : 'hold'}
+                  score={risk?.score}
+                  confidence={null}
+                  rows={
+                    risk && !risk._error
+                      ? [
+                          ['Nivel',      risk.risk_level ?? 'N/D'],
+                          ['Vol. anual', risk.volatility_annual != null
+                            ? `${(risk.volatility_annual * 100).toFixed(1)}%`
+                            : 'N/D'],
+                          ['Beta',       risk.beta?.toFixed(2) ?? 'N/D'],
+                          ['VaR 95%',    risk.var_95_usd != null ? `$${risk.var_95_usd}` : 'N/D'],
+                          ['ES 95%',     risk.es_95_pct != null
+                            ? `${(risk.es_95_pct * 100).toFixed(2)}%`
+                            : 'N/D'],
+                          ['Max peso',   risk.max_weight_pct != null ? `${risk.max_weight_pct}%` : 'N/D'],
+                        ]
+                      : null
+                  }
+                  error={risk?._error}
+                />
+              </div>
+            </section>
+          )}
+
+          {/* Panel de recomendación */}
+          {done && orch && (
+            <section className="bg-gray-900 border border-gray-800 rounded-lg p-5">
+              <h2 className="text-xs text-gray-400 uppercase tracking-widest mb-4">
+                Recomendación final
+              </h2>
+
+              {/* Fila principal: acción + anillo */}
+              <div className="flex items-center gap-6 mb-5">
+                <span className={`px-6 py-2 rounded border text-2xl font-bold uppercase tracking-widest ${ACTION_BG[orch.final_action] ?? ACTION_BG.hold}`}>
+                  {orch.final_action}
+                </span>
+                <ConfidenceRing score={orch.confidence_score} size={96} />
+                <div className="flex flex-col gap-1">
+                  <span className="text-xs text-gray-500">Confianza</span>
+                  <span className="text-lg font-bold">{orch.confidence_score}%</span>
+                </div>
+                {orch.contradiction_detected && (
+                  <span className="text-xs text-orange-400 border border-orange-400/40 rounded px-2 py-1 self-start">
+                    Contradicción
+                  </span>
+                )}
+              </div>
+
+              {/* Targets */}
+              <div className="grid grid-cols-3 gap-3 mb-4">
+                <div className="bg-gray-800 rounded p-3">
+                  <div className="text-xs text-gray-500 mb-1">Precio objetivo</div>
+                  <div className="text-sm font-bold text-green-300">
+                    {orch.price_target != null ? `$${orch.price_target.toFixed(2)}` : '—'}
+                  </div>
+                </div>
+                <div className="bg-gray-800 rounded p-3">
+                  <div className="text-xs text-gray-500 mb-1">Stop loss</div>
+                  <div className="text-sm font-bold text-red-400">
+                    {orch.stop_loss != null ? `$${orch.stop_loss.toFixed(2)}` : '—'}
+                  </div>
+                </div>
+                <div className="bg-gray-800 rounded p-3">
+                  <div className="text-xs text-gray-500 mb-1">Peso cartera</div>
+                  <div className="text-sm font-bold">
+                    {orch.portfolio_weight?.toFixed(1)}%
+                  </div>
+                </div>
+              </div>
+
+              {/* Pesos por horizonte */}
+              {orch.agent_weights && (
+                <div className="flex gap-4 mb-4">
+                  {[
+                    ['Técnico',      orch.agent_weights.technical],
+                    ['Fundamental',  orch.agent_weights.fundamental],
+                    ['Riesgo',       orch.agent_weights.risk],
+                  ].map(([lbl, w]) => (
+                    <div key={lbl} className="flex-1">
+                      <div className="text-xs text-gray-500 mb-1">{lbl} {Math.round(w * 100)}%</div>
+                      <div className="h-1.5 bg-gray-700 rounded">
+                        <div
+                          className="h-1.5 bg-blue-500 rounded transition-all"
+                          style={{ width: `${w * 100}%` }}
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
               )}
-            </div>
-          ))}
-        </section>
-      )}
 
-      {/* ── Disclaimer ── */}
-      <p className="text-xs text-gray-600 text-center border border-gray-800 rounded p-3">
+              {/* Justificación */}
+              <div className="bg-gray-800 rounded p-4 text-sm text-gray-300 leading-relaxed">
+                {orch.justification_multicriteria}
+              </div>
+            </section>
+          )}
+
+          {/* Datos crudos por agente */}
+          {done && (
+            <section className="bg-gray-900 border border-gray-800 rounded-lg p-5">
+              <h2 className="text-xs text-gray-400 uppercase tracking-widest mb-3">
+                Datos crudos
+              </h2>
+              {[
+                ['technical',    'Técnico'],
+                ['fundamental',  'Fundamental'],
+                ['risk',         'Riesgo'],
+                ['orchestrator', 'Orquestador'],
+              ].map(([key, lbl]) => (
+                <div key={key} className="mb-1">
+                  <button
+                    className="w-full text-left text-xs text-gray-600 hover:text-gray-300 flex justify-between py-1 border-b border-gray-800"
+                    onClick={() => setOpenAgent(o => o === key ? null : key)}
+                  >
+                    <span>{lbl}</span>
+                    <span>{openAgent === key ? '▲' : '▼'}</span>
+                  </button>
+                  {openAgent === key && (
+                    <pre className="bg-gray-800 rounded p-3 text-xs text-gray-400 overflow-x-auto mt-1 max-h-56 overflow-y-auto">
+                      {JSON.stringify(results[key], null, 2)}
+                    </pre>
+                  )}
+                </div>
+              ))}
+            </section>
+          )}
+
+        </main>
+      </div>
+
+      {/* FOOTER */}
+      <footer className="border-t border-gray-800 px-6 py-2 text-xs text-gray-600 text-center">
         Este sistema produce información para la toma de decisiones, no asesoría financiera.
         No ejecuta órdenes. Consulte a un profesional antes de invertir.
-      </p>
+      </footer>
+    </div>
+  );
+}
 
+// ── Sub-componente: tarjeta de métricas por agente ────────────────────────────
+
+function AgentMetricsCard({ title, signal, score, confidence, rows, error }) {
+  const sigColor = signal === 'buy' ? 'text-green-400'
+                 : signal === 'sell' ? 'text-red-400'
+                 : 'text-yellow-400';
+
+  return (
+    <div className="bg-gray-800 rounded-lg p-4">
+      <div className="flex items-center justify-between mb-3">
+        <span className="text-xs text-gray-400 font-bold uppercase">{title}</span>
+        {signal && (
+          <span className={`text-xs font-bold uppercase ${sigColor}`}>
+            {signal}
+          </span>
+        )}
+      </div>
+
+      {error ? (
+        <div className="text-xs text-gray-600">No disponible</div>
+      ) : rows ? (
+        <div className="space-y-1.5">
+          {rows.map(([k, v]) => (
+            <div key={k} className="flex justify-between text-xs">
+              <span className="text-gray-500">{k}</span>
+              <span className="text-gray-200 font-mono">{v}</span>
+            </div>
+          ))}
+          {score != null && (
+            <div className="flex justify-between text-xs border-t border-gray-700 pt-1.5 mt-2">
+              <span className="text-gray-500">Score</span>
+              <span className={`font-bold ${score > 0 ? 'text-green-400' : score < 0 ? 'text-red-400' : 'text-gray-400'}`}>
+                {score > 0 ? '+' : ''}{score?.toFixed(3)}
+              </span>
+            </div>
+          )}
+          {confidence != null && (
+            <div className="flex justify-between text-xs">
+              <span className="text-gray-500">Confianza</span>
+              <span className="text-gray-200">{confidence}%</span>
+            </div>
+          )}
+        </div>
+      ) : (
+        <div className="text-xs text-gray-600">Sin datos</div>
+      )}
     </div>
   );
 }
