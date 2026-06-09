@@ -91,8 +91,30 @@ El JSON debe tener exactamente estos campos:
     "fundamental": número,
     "risk": número
   },
+  "resumen_usuario": "texto en español dirigido a una persona SIN conocimientos técnicos de finanzas",
   "justification_multicriteria": "texto en español explicando el razonamiento multi-criterio, las señales de cada agente, el peso aplicado según el horizonte, y el disclaimer de que es información y no asesoría financiera"
-}`;
+}
+
+───────────────────────────────────────────────
+CÓMO ESCRIBIR "resumen_usuario" (CAMPO PRINCIPAL PARA EL USUARIO)
+───────────────────────────────────────────────
+Este es el texto que la persona lee primero. Debe ser claro y cercano. Reglas:
+- Empezá comunicando la decisión en lenguaje cotidiano (ej: "Te sugerimos comprar",
+  "Conviene esperar por ahora", "Lo mejor sería vender"). Recordá que "hold" significa
+  mantener/esperar, no es una indecisión.
+- Explicá EN POCAS FRASES por qué es la mejor opción, con una idea sencilla
+  (ej: "la empresa está sólida y su precio viene en buen momento" en vez de "RSI 55,
+  Golden Cross, P/E bajo vs sector").
+- NO incluyas números de cálculos, siglas ni jerga (nada de RSI, MACD, VaR, beta, PEG,
+  P/E, volatilidad anualizada, scores, ni los pesos por horizonte).
+- Si hay dudas o señales en conflicto, decilo con honestidad y en tono tranquilo
+  (ej: "las señales no son del todo claras, por eso preferimos ser prudentes").
+- 2 a 4 frases, tono amable y respetuoso, tratando a la persona de "vos"/"te".
+- Cerrá SIEMPRE con una frase breve recordando que esto es información para ayudarte
+  a decidir, no una asesoría financiera ni una orden de compra/venta.
+
+El campo "justification_multicriteria" mantené la explicación técnica y detallada de siempre
+(es para el registro y para usuarios avanzados, no se le muestra de forma destacada al usuario).`;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -178,6 +200,10 @@ function fallbackResult(profile, riskResult) {
     portfolio_weight:          0,
     contradiction_detected:    true,
     agent_weights:             AGENT_WEIGHTS[horizon] ?? AGENT_WEIGHTS.medium,
+    resumen_usuario:
+      'Por ahora preferimos no recomendarte ninguna acción concreta: no pudimos completar ' +
+      'el análisis con la información disponible, así que lo más prudente es esperar. ' +
+      'Recordá que esto es información para ayudarte a decidir, no una asesoría financiera.',
     justification_multicriteria:
       'No se pudo obtener recomendación del orquestador. ' +
       'Se recomienda mantener (hold) con confianza mínima hasta obtener un análisis válido. ' +
@@ -226,6 +252,15 @@ function normalizeResult(raw, profile, riskResult) {
   // justification_multicriteria
   if (typeof raw.justification_multicriteria !== 'string' || !raw.justification_multicriteria) {
     raw.justification_multicriteria = 'Justificación no disponible.';
+  }
+
+  // resumen_usuario — texto amigable; si falta, derivar uno mínimo legible
+  if (typeof raw.resumen_usuario !== 'string' || !raw.resumen_usuario) {
+    const accion = { buy: 'comprar', sell: 'vender', hold: 'esperar por ahora' }[raw.final_action]
+      ?? 'esperar por ahora';
+    raw.resumen_usuario =
+      `Según nuestro análisis, lo más razonable sería ${accion}. ` +
+      'Recordá que esto es información para ayudarte a decidir, no una asesoría financiera.';
   }
 
   return raw;

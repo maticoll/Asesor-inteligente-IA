@@ -254,6 +254,10 @@ export default function InvestmentAdvisor() {
         price_target: null, stop_loss: null, portfolio_weight: 0,
         contradiction_detected: true,
         agent_weights: { technical: 0.40, fundamental: 0.35, risk: 0.25 },
+        resumen_usuario:
+          'Tuvimos un problema técnico y no pudimos completar el análisis, así que por ahora ' +
+          'lo más prudente es esperar. Recordá que esto es información para ayudarte a decidir, ' +
+          'no una asesoría financiera.',
         justification_multicriteria: 'Error en el orquestador. Resultado de seguridad: hold.',
       };
     }
@@ -575,10 +579,22 @@ export default function InvestmentAdvisor() {
                 </div>
               )}
 
-              {/* Justificación */}
-              <div className="bg-gray-800 rounded p-4 text-sm text-gray-300 leading-relaxed">
-                {orch.justification_multicriteria}
+              {/* Resumen para el usuario (lenguaje accesible) */}
+              <div className="bg-gray-800 rounded p-4 text-sm text-gray-200 leading-relaxed">
+                {orch.resumen_usuario ?? orch.justification_multicriteria}
               </div>
+
+              {/* Detalle técnico (opcional, colapsado) */}
+              {orch.justification_multicriteria && (
+                <details className="mt-3">
+                  <summary className="text-xs text-gray-500 hover:text-gray-300 cursor-pointer">
+                    Ver explicación técnica detallada
+                  </summary>
+                  <div className="bg-gray-800/60 rounded p-4 mt-2 text-xs text-gray-400 leading-relaxed">
+                    {orch.justification_multicriteria}
+                  </div>
+                </details>
+              )}
             </section>
           )}
 
