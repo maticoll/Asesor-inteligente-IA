@@ -1,5 +1,6 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { useUser, UserButton } from '@clerk/clerk-react';
+import { kpi } from './lib/analytics.js';
 import { runTechnicalAgent }    from './agents/technical.js';
 import { runFundamentalAgent }  from './agents/fundamental.js';
 import { runRiskAgent }         from './agents/risk.js';
@@ -174,6 +175,16 @@ export default function InvestmentAdvisor() {
     return () => window.removeEventListener('resize', handler);
   }, []);
 
+  // Abandono: el usuario entró y se va sin ejecutar ningún análisis.
+  const hasAnalyzedRef = useRef(false);
+  useEffect(() => {
+    const onLeave = () => {
+      if (!hasAnalyzedRef.current) kpi.abandono();
+    };
+    window.addEventListener('pagehide', onLeave);
+    return () => window.removeEventListener('pagehide', onLeave);
+  }, []);
+
   const setAgentState  = (a, s) => setAgentStates(p  => ({ ...p, [a]: s }));
   const setAgentStatus = (a, m) => setStatusMessages(p => ({ ...p, [a]: m }));
   const setAgentResult = (a, r) => setResults(p       => ({ ...p, [a]: r }));
@@ -182,6 +193,12 @@ export default function InvestmentAdvisor() {
 
   const runAnalysis = useCallback(async () => {
     if (!ticker.trim()) return;
+    hasAnalyzedRef.current = true;
+    kpi.analysisRun({
+      ticker: ticker.trim().toUpperCase(),
+      risk_profile: profile.risk_profile,
+      horizon: profile.horizon,
+    });
     setLoading(true);
     setYahooData(null);
     setAgentStates({ technical: 'fetching', fundamental: 'fetching', risk: 'idle', orchestrator: 'idle' });
@@ -205,6 +222,7 @@ export default function InvestmentAdvisor() {
     if (yahoo._error) {
       setAgentState('technical', 'error');
       setAgentStatus('technical', yahoo._error);
+      kpi.apiError({ source: 'yahoo', message: yahoo._error });
       techResult = { _error: yahoo._error };
     } else {
       setAgentState('technical', 'analyzing');
@@ -214,6 +232,7 @@ export default function InvestmentAdvisor() {
       } catch (err) {
         setAgentState('technical', 'error');
         setAgentStatus('technical', err.message);
+        kpi.apiError({ source: 'technical', message: err.message });
         techResult = { _error: err.message };
       }
     }
@@ -224,6 +243,7 @@ export default function InvestmentAdvisor() {
     if (alpha._error) {
       setAgentState('fundamental', 'error');
       setAgentStatus('fundamental', alpha._error);
+      kpi.apiError({ source: 'alpha', message: alpha._error });
       fundResult = { _error: alpha._error };
     } else {
       setAgentState('fundamental', 'analyzing');
@@ -233,6 +253,7 @@ export default function InvestmentAdvisor() {
       } catch (err) {
         setAgentState('fundamental', 'error');
         setAgentStatus('fundamental', err.message);
+        kpi.apiError({ source: 'fundamental', message: err.message });
         fundResult = { _error: err.message };
       }
     }
@@ -252,6 +273,7 @@ export default function InvestmentAdvisor() {
     } catch (err) {
       setAgentState('risk', 'error');
       setAgentStatus('risk', err.message);
+      kpi.apiError({ source: 'risk', message: err.message });
       riskResult = { _error: err.message, risk_level: 'medium', max_weight_pct: 5, score: 0, beta: 1 };
     }
     setAgentResult('risk', riskResult);
@@ -272,6 +294,7 @@ export default function InvestmentAdvisor() {
     } catch (err) {
       setAgentState('orchestrator', 'error');
       setAgentStatus('orchestrator', err.message);
+      kpi.apiError({ source: 'orchestrator', message: err.message });
       orchResult = {
         final_action: 'hold', confidence_score: 30, horizon: profile.horizon,
         price_target: null, stop_loss: null, portfolio_weight: 0,

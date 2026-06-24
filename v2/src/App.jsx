@@ -1,11 +1,47 @@
 import { useState, useEffect } from 'react';
-import { ClerkProvider, SignedIn, SignedOut } from '@clerk/clerk-react';
+import { ClerkProvider, SignedIn, SignedOut, useUser } from '@clerk/clerk-react';
 import { Analytics } from '@vercel/analytics/react';
 import InvestmentAdvisor from './InvestmentAdvisor.jsx';
 import SignInScreen from './auth/SignInScreen.jsx';
 import AdminPage from './admin/AdminPage.jsx';
+import { kpi } from './lib/analytics.js';
 
 const PUBLISHABLE_KEY = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;
+
+// Ventana para considerar una cuenta "recién creada" (registro vs. login).
+const SIGNUP_WINDOW_MS = 2 * 60 * 1000;
+
+// ── Tracker de KPIs de autenticación (registro / login) ────────────────────────
+// Se monta dentro de <SignedIn>, así corre cuando ya hay sesión activa.
+function AuthKpiTracker() {
+  const { isLoaded, isSignedIn, user } = useUser();
+
+  useEffect(() => {
+    if (!isLoaded || !isSignedIn || !user) return;
+
+    // Registro: cuenta nueva (createdAt reciente), una sola vez por usuario.
+    const signupKey = `kpi_signup_${user.id}`;
+    const createdAt = user.createdAt ? new Date(user.createdAt).getTime() : 0;
+    const isNew = createdAt > 0 && Date.now() - createdAt < SIGNUP_WINDOW_MS;
+
+    let countedAsSignup = false;
+    if (isNew && !localStorage.getItem(signupKey)) {
+      kpi.signup({ method: user.primaryEmailAddress ? 'email' : 'other' });
+      localStorage.setItem(signupKey, '1');
+      countedAsSignup = true;
+    }
+
+    // Login: una vez por sesión de pestaña. El primer ingreso de un usuario nuevo
+    // se contabiliza como registro, no como login (evita doble conteo del funnel).
+    const loginKey = 'kpi_login_fired';
+    if (sessionStorage.getItem(loginKey) !== user.id) {
+      if (!countedAsSignup) kpi.login();
+      sessionStorage.setItem(loginKey, user.id);
+    }
+  }, [isLoaded, isSignedIn, user]);
+
+  return null;
+}
 
 // ── Router minimalista basado en hash (sin dependencias) ───────────────────────
 function Router() {
@@ -63,6 +99,7 @@ export default function App() {
         }}
       >
         <SignedIn>
+          <AuthKpiTracker />
           <Router />
         </SignedIn>
         <SignedOut>
