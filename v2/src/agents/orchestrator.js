@@ -1,13 +1,17 @@
 /**
- * orchestrator.js — Agente Orquestador con LLM (Claude)
+ * orchestrator.js — Agente Orquestador HÍBRIDO
  *
- * runOrchestratorAgent(techResult, fundResult, riskResult, profile, onStatus) → OrchestratorResult
+ * Determinístico en la DECISIÓN: final_action, confianza, price_target, stop_loss y
+ * portfolio_weight se calculan en código (decideAction), a partir de los scores de los
+ * tres agentes, los pesos por horizonte y reglas explícitas.
+ *
+ * Generativo solo en la EXPLICACIÓN: el LLM (Claude) recibe la decisión ya tomada y
+ * redacta resumen_usuario y justification_multicriteria. NO puede cambiar la decisión.
+ * Si el LLM falla, se usa una explicación determinística de respaldo.
  *
  * Lógica basada en INVESTIGACION_CRITERIOS_INVERSION.md:
- *   - Parte D.3: ponderación por horizonte (corto/medio/largo)
- *   - Parte E.3 caso A: veto fundamental a largo plazo
- *   - Parte E.5: HOLD de primera clase; ≥2 confirmaciones para no-HOLD
- *   - Guardarraíl duro: portfolio_weight ≤ risk.max_weight_pct (en código, no en LLM)
+ *   - D.3: ponderación por horizonte | E.3: veto fundamental + confirmación mínima
+ *   - E.5: HOLD de primera clase | Guardarraíl de peso ≤ max_weight_pct
  */
 
 // ── Pesos por horizonte (Tabla D.3) ──────────────────────────────────────────
@@ -17,272 +21,249 @@ const AGENT_WEIGHTS = {
   long:   { technical: 0.15, fundamental: 0.60, risk: 0.25 },
 };
 
-// ── System prompt del orquestador ────────────────────────────────────────────
-export const SYSTEM_PROMPT = `Eres el orquestador de un sistema de asesoría de inversiones.
-Recibes los resultados de tres agentes especializados (técnico, fundamental, riesgo), el perfil
-del inversor y el precio actual de la acción. Tu tarea es sintetizar una recomendación personalizada
-y justificada.
+const DECISION_THRESHOLD = 0.12; // |score combinado| para salir de HOLD
 
-IMPORTANTE: Este sistema produce INFORMACIÓN para la decisión del usuario, NO asesoría financiera,
-y NO ejecuta órdenes. Aclararlo siempre en justification_multicriteria.
+function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
+function dir(signal) { return signal === 'buy' ? 1 : signal === 'sell' ? -1 : 0; }
 
-───────────────────────────────────────────────
-PONDERACIÓN POR HORIZONTE DEL INVERSOR (Tabla D.3)
-───────────────────────────────────────────────
-- corto (short):  técnico 0.60 | fundamental 0.15 | riesgo 0.25
-- medio (medium): técnico 0.40 | fundamental 0.35 | riesgo 0.25
-- largo (long):   técnico 0.15 | fundamental 0.60 | riesgo 0.25
+// ── DECISIÓN DETERMINÍSTICA ───────────────────────────────────────────────────
 
-───────────────────────────────────────────────
-REGLAS OBLIGATORIAS
-───────────────────────────────────────────────
+/**
+ * Calcula la recomendación final SIN usar el LLM. Exportada para tests.
+ * @returns {object} decisión con final_action, confidence_score, etc. + metadata interna (_*)
+ */
+export function decideAction(techResult, fundResult, riskResult, profile = {}, currentPrice = null) {
+  const horizon = ['short', 'medium', 'long'].includes(profile?.horizon) ? profile.horizon : 'medium';
+  const weights = AGENT_WEIGHTS[horizon];
 
-1. VETO FUNDAMENTAL A LARGO PLAZO (Parte E.3, Caso A):
-   Si el horizonte es "long" y el agente fundamental tiene señal "sell" o score < -0.10,
-   la recomendación máxima es "hold" (no "buy"). Excepción: si el técnico muestra un
-   cambio estructural muy fuerte (score > 0.60 en uptrend confirmado), puedes salir del veto,
-   pero DEBES explicarlo explícitamente en la justificación.
+  const hasTech = techResult && !techResult._error;
+  const hasFund = fundResult && !fundResult._error;
+  const hasRisk = riskResult && !riskResult._error;
 
-2. CONFIRMACIÓN MÍNIMA (Parte E.3):
-   Para recomendar "buy" o "sell", exige señales alineadas de al menos 2 familias de análisis
-   distintas (técnico, fundamental, riesgo). Si hay conflicto o menos de 2 señales alineadas,
-   recomienda "hold" o baja la confianza significativamente (< 50).
+  const techScore = hasTech ? (techResult.score ?? 0) : 0;
+  const fundScore = hasFund ? (fundResult.score ?? 0) : 0;
+  const riskScore = hasRisk ? (riskResult.score ?? 0) : 0;
 
-3. HOLD DE PRIMERA CLASE (Parte E.5):
-   "hold" es una decisión legítima, no un fallback. Úsalo cuando:
-   - Hay contradicción entre señales
-   - Baja confirmación (< 2 familias alineadas)
-   - El régimen técnico es ambiguo (range)
-   - Falta información de algún agente
-   En estos casos, pon contradiction_detected: true y confidence_score < 50.
+  // Score combinado ponderado por horizonte.
+  // Técnico y fundamental son direccionales (−1..+1); el riesgo penaliza (score ≤ 0 si es alto).
+  const combined = weights.technical * techScore
+                 + weights.fundamental * fundScore
+                 + weights.risk * riskScore;
 
-4. GUARDARRAÍL DE PESO:
-   portfolio_weight debe ser <= max_weight_pct del agente de riesgo.
-   Si no hay datos de riesgo, usa un máximo de 5%.
+  const techDir = hasTech ? dir(techResult.signal) : 0;
+  const fundDir = hasFund ? dir(fundResult.signal) : 0;
+  const riskLevel = hasRisk ? riskResult.risk_level : 'medium';
 
-5. COHERENCIA DE PRECIOS (OBLIGATORIO):
-   El contexto incluye "PRECIO ACTUAL (currentPrice)". Usá ese valor como ancla:
-   - price_target debe estar entre currentPrice × 0.90 y currentPrice × 2.0 para una posición
-     típica (ajustá según horizonte y volatilidad del agente técnico).
-   - stop_loss debe estar por DEBAJO de currentPrice y dentro de un rango razonable dado por
-     la volatilidad anualizada (ej. currentPrice × (1 − volatilidad_anualizada × 0.5) como piso).
-   - Si currentPrice es null o los datos son insuficientes, devuelve null en ambos campos.
+  // Contradicción: técnico y fundamental apuntan a direcciones opuestas.
+  const contradiction = (techDir > 0 && fundDir < 0) || (techDir < 0 && fundDir > 0);
 
-6. AGENTES NO DISPONIBLES:
-   Si un agente reporta error o datos ausentes, reduce confidence_score en 15 puntos
-   por cada agente faltante y explícalo en la justificación.
+  // Confirmación mínima: nº de familias alineadas en cada dirección (E.3).
+  const bullishFamilies = (techDir > 0 ? 1 : 0) + (fundDir > 0 ? 1 : 0) + (riskLevel === 'low' ? 1 : 0);
+  const bearishFamilies = (techDir < 0 ? 1 : 0) + (fundDir < 0 ? 1 : 0) + (riskLevel === 'high' ? 1 : 0);
 
-───────────────────────────────────────────────
-FORMATO DE SALIDA — JSON ESTRICTO
-───────────────────────────────────────────────
-Devuelve UNICAMENTE un JSON válido, sin texto antes ni después, sin bloques de código markdown.
-El JSON debe tener exactamente estos campos:
+  const reasons = [];
+  let action = 'hold';
 
-{
-  "final_action": "buy" | "sell" | "hold",
-  "confidence_score": número entre 0 y 100,
-  "horizon": "short" | "medium" | "long",
-  "price_target": número o null,
-  "stop_loss": número o null,
-  "portfolio_weight": número entre 0 y 20,
-  "contradiction_detected": true | false,
-  "agent_weights": {
-    "technical": número,
-    "fundamental": número,
-    "risk": número
-  },
-  "resumen_usuario": "texto en español dirigido a una persona SIN conocimientos técnicos de finanzas",
-  "justification_multicriteria": "texto en español TÉCNICO y detallado (ver instrucciones abajo)"
+  if (combined > DECISION_THRESHOLD && bullishFamilies >= 2 && !contradiction) {
+    action = 'buy';
+    reasons.push(`Score combinado +${combined.toFixed(2)} > ${DECISION_THRESHOLD} con ${bullishFamilies} familias alcistas alineadas.`);
+  } else if (combined < -DECISION_THRESHOLD && bearishFamilies >= 2 && !contradiction) {
+    action = 'sell';
+    reasons.push(`Score combinado ${combined.toFixed(2)} < -${DECISION_THRESHOLD} con ${bearishFamilies} familias bajistas alineadas.`);
+  } else {
+    action = 'hold';
+    if (contradiction) reasons.push('Técnico y fundamental se contradicen → HOLD de primera clase (E.5).');
+    else if (Math.abs(combined) <= DECISION_THRESHOLD) reasons.push(`Score combinado ${combined.toFixed(2)} en zona neutral (±${DECISION_THRESHOLD}) → HOLD.`);
+    else reasons.push('Sin confirmación mínima (≥2 familias alineadas) → HOLD.');
+  }
+
+  // Veto fundamental a largo plazo (E.3, Caso A).
+  let vetoApplied = false;
+  if (horizon === 'long' && hasFund && (fundResult.signal === 'sell' || fundScore < -0.10)) {
+    const strongTech = hasTech && techScore > 0.60 && techResult.regime === 'uptrend';
+    if (action === 'buy' && !strongTech) {
+      action = 'hold';
+      vetoApplied = true;
+      reasons.push('Veto fundamental a largo plazo: fundamental bajista limita la recomendación a HOLD.');
+    } else if (action === 'buy' && strongTech) {
+      reasons.push('Veto fundamental superado por cambio estructural técnico muy fuerte (score>0.60 en uptrend).');
+    }
+  }
+
+  // Confianza determinística.
+  const missing = (hasTech ? 0 : 1) + (hasFund ? 0 : 1) + (hasRisk ? 0 : 1);
+  let confidence = 50 + Math.round(Math.abs(combined) * 40);
+  if (action !== 'hold') confidence += 5;
+  if (contradiction) confidence = Math.min(confidence, 45);
+  confidence -= missing * 15;
+  const agentConfs = [hasTech && techResult.confidence, hasFund && fundResult.confidence].filter((x) => typeof x === 'number');
+  if (agentConfs.length) {
+    const avg = agentConfs.reduce((a, b) => a + b, 0) / agentConfs.length;
+    confidence = Math.round(0.6 * confidence + 0.4 * avg);
+  }
+  confidence = clamp(confidence, 5, 95);
+
+  // Guardarraíl de peso: ≤ max_weight_pct; escala con la confianza; 0 si no es buy.
+  const maxW = (hasRisk && riskResult.max_weight_pct != null) ? riskResult.max_weight_pct : 5;
+  let portfolio_weight = 0;
+  if (action === 'buy') {
+    portfolio_weight = parseFloat(Math.min(maxW * (confidence / 100), maxW).toFixed(2));
+  }
+
+  // price_target / stop_loss: solo en buy, anclados al precio actual y la volatilidad.
+  let price_target = null;
+  let stop_loss = null;
+  const vol = hasTech ? (techResult.indicators?.volatility_annual ?? null) : null;
+  if (action === 'buy' && currentPrice != null && isFinite(currentPrice)) {
+    const horizonK = { short: 0.06, medium: 0.12, long: 0.20 }[horizon];
+    const upside = horizonK + (vol != null ? Math.min(vol, 0.6) * 0.3 : 0.05);
+    price_target = parseFloat((currentPrice * (1 + upside)).toFixed(2));
+    const stopDrop = vol != null ? Math.min(vol * 0.5, 0.25) : 0.10;
+    stop_loss = parseFloat((currentPrice * (1 - stopDrop)).toFixed(2));
+  }
+
+  return {
+    final_action: action,
+    confidence_score: confidence,
+    horizon,
+    price_target,
+    stop_loss,
+    portfolio_weight,
+    contradiction_detected: contradiction,
+    agent_weights: weights,
+    // metadata interna para construir la explicación (no forma parte del contrato de salida)
+    _combined: parseFloat(combined.toFixed(3)),
+    _reasons: reasons,
+    _veto_applied: vetoApplied,
+    _missing: missing,
+  };
 }
 
-───────────────────────────────────────────────
-CÓMO ESCRIBIR "resumen_usuario" (CAMPO PRINCIPAL PARA EL USUARIO)
-───────────────────────────────────────────────
-Este es el texto que la persona lee primero. Debe ser claro y cercano. Reglas:
-- Empezá comunicando la decisión en lenguaje cotidiano (ej: "Te sugerimos comprar",
-  "Conviene esperar por ahora", "Lo mejor sería vender"). Recordá que "hold" significa
-  mantener/esperar, no es una indecisión.
-- Explicá EN POCAS FRASES por qué es la mejor opción, con una idea sencilla
-  (ej: "la empresa está sólida y su precio viene en buen momento" en vez de "RSI 55,
-  Golden Cross, P/E bajo vs sector").
-- NO incluyas números de cálculos, siglas ni jerga (nada de RSI, MACD, VaR, beta, PEG,
-  P/E, volatilidad anualizada, scores, ni los pesos por horizonte).
-- Si hay dudas o señales en conflicto, decilo con honestidad y en tono tranquilo
-  (ej: "las señales no son del todo claras, por eso preferimos ser prudentes").
-- 2 a 4 frases, tono amable y respetuoso, tratando a la persona de "vos"/"te".
-- Cerrá SIEMPRE con una frase breve recordando que esto es información para ayudarte
-  a decidir, no una asesoría financiera ni una orden de compra/venta.
+// ── PROMPT DE EXPLICACIÓN (el LLM solo redacta, no decide) ─────────────────────
 
-───────────────────────────────────────────────
-CÓMO ESCRIBIR "justification_multicriteria" (DATOS CRUDOS — TÉCNICO)
-───────────────────────────────────────────────
-Este texto NO se le muestra de forma destacada al usuario: aparece en la sección "Datos crudos"
-para usuarios avanzados y para auditoría. Por eso debe ser lo MÁS técnico y detallado posible,
-SIN simplificar. Incluí explícitamente:
-- La señal, el score y la confianza de cada agente (técnico, fundamental, riesgo), con sus
-  valores concretos (ej: RSI, MACD, SMA50/200, Golden/Death Cross, P/E, ROE, PEG, beta,
-  volatilidad anualizada, VaR 95%, max_weight_pct).
-- El régimen de mercado detectado y cómo influyó.
-- Los pesos aplicados por horizonte (agent_weights) y cómo se combinaron las señales.
-- Si se activó el veto fundamental, la confirmación mínima (≥2 familias), o si hubo
-  contradicción, explicándolo con los números que lo respaldan.
-- El razonamiento de price_target, stop_loss y portfolio_weight respecto al precio actual.
-- Cerrá con el disclaimer de que es información y no asesoría financiera.
-Es la explicación completa de ingeniería; no omitas cálculos ni cifras.`;
+export const SYSTEM_PROMPT = `Eres el redactor de un sistema de asesoría de inversiones.
+La DECISIÓN (comprar/mantener/vender y todos los números) YA FUE CALCULADA por reglas
+determinísticas. Tu tarea NO es decidir ni cambiar nada: es EXPLICAR la decisión recibida
+de forma clara y técnica. NO modifiques final_action, price_target, stop_loss,
+portfolio_weight ni confidence_score: tomalos como dados.
+
+IMPORTANTE: Este sistema produce INFORMACIÓN, NO asesoría financiera, y NO ejecuta órdenes.
+Aclaralo siempre.
+
+Devuelve ÚNICAMENTE un JSON válido (sin markdown, sin texto fuera del JSON) con EXACTAMENTE
+estos dos campos:
+
+{
+  "resumen_usuario": "...",
+  "justification_multicriteria": "..."
+}
+
+CÓMO ESCRIBIR "resumen_usuario" (lo que lee la persona):
+- Empezá comunicando la decisión recibida en lenguaje cotidiano ("Te sugerimos comprar",
+  "Conviene esperar por ahora", "Lo mejor sería vender"). "hold" = mantener/esperar.
+- Explicá en pocas frases por qué, con ideas sencillas, SIN siglas ni números técnicos
+  (nada de RSI, MACD, VaR, beta, PEG, scores ni pesos).
+- Si hay contradicción entre señales, decilo con honestidad y tono tranquilo.
+- 2 a 4 frases, tono amable, tratando de "vos"/"te".
+- Cerrá SIEMPRE recordando que es información para ayudarte a decidir, no asesoría financiera.
+
+CÓMO ESCRIBIR "justification_multicriteria" (técnico, para auditoría):
+- Detallá las señales, scores y confianza de cada agente con sus valores concretos.
+- Explicá el régimen técnico, los pesos por horizonte aplicados y cómo se combinaron.
+- Mencioná explícitamente la regla que determinó la decisión (umbral, confirmación mínima,
+  veto fundamental o contradicción) usando los números que la respaldan.
+- Explicá el razonamiento de price_target, stop_loss y portfolio_weight respecto al precio actual.
+- Cerrá con el disclaimer de que es información y no asesoría financiera.`;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
-
-/** Construye el mensaje de usuario con el contexto de los 3 agentes (exportado para tests) */
-export function buildUserMessageForTest(techResult, fundResult, riskResult, profile, currentPrice) {
-  return buildUserMessage(techResult, fundResult, riskResult, profile, currentPrice);
-}
-
-function buildUserMessage(techResult, fundResult, riskResult, profile, currentPrice) {
+/** Construye el mensaje para el LLM con la decisión YA tomada + datos de los agentes. */
+function buildExplanationMessage(decision, techResult, fundResult, riskResult, profile, currentPrice) {
+  const stripInternal = ({ _combined, _reasons, _veto_applied, _missing, ...pub }) => pub;
   const lines = [];
-  lines.push('=== PERFIL DEL INVERSOR ===');
+
+  lines.push('=== DECISIÓN YA CALCULADA (NO LA CAMBIES, solo explicala) ===');
+  lines.push(JSON.stringify(stripInternal(decision), null, 2));
+
+  lines.push('\n=== CÓMO SE LLEGÓ A LA DECISIÓN (reglas determinísticas) ===');
+  lines.push(`score_combinado: ${decision._combined}`);
+  lines.push(`razones: ${decision._reasons.join(' ')}`);
+
+  lines.push('\n=== PERFIL DEL INVERSOR ===');
   lines.push(JSON.stringify({
     capital:      profile?.capital ?? null,
     risk_profile: profile?.risk_profile ?? 'moderate',
     horizon:      profile?.horizon ?? 'medium',
   }, null, 2));
 
-  lines.push('\n=== PRECIO ACTUAL (currentPrice) ===');
+  lines.push('\n=== PRECIO ACTUAL ===');
   lines.push(currentPrice != null ? String(currentPrice) : 'null — no disponible');
 
-  lines.push('\n=== RESULTADO AGENTE TÉCNICO ===');
-  if (techResult && !techResult._error) {
-    // Excluir closes[] — el LLM no necesita la serie completa de precios
-    const { closes: _closes, ...techForLLM } = techResult;
-    lines.push(JSON.stringify(techForLLM, null, 2));
-  } else {
-    lines.push('ERROR: el agente técnico no está disponible. ' +
-      (techResult?._error || 'Datos ausentes.'));
-  }
+  lines.push('\n=== AGENTE TÉCNICO ===');
+  lines.push(techResult && !techResult._error
+    ? JSON.stringify((({ closes, ...t }) => t)(techResult), null, 2)
+    : 'No disponible.');
 
-  lines.push('\n=== RESULTADO AGENTE FUNDAMENTAL ===');
-  if (fundResult && !fundResult._error) {
-    lines.push(JSON.stringify(fundResult, null, 2));
-  } else {
-    lines.push('ERROR: el agente fundamental no está disponible. ' +
-      (fundResult?._error || 'Datos ausentes.'));
-  }
+  lines.push('\n=== AGENTE FUNDAMENTAL ===');
+  lines.push(fundResult && !fundResult._error ? JSON.stringify(fundResult, null, 2) : 'No disponible.');
 
-  lines.push('\n=== RESULTADO AGENTE DE RIESGO ===');
-  if (riskResult && !riskResult._error) {
-    lines.push(JSON.stringify(riskResult, null, 2));
-  } else {
-    lines.push('ERROR: el agente de riesgo no está disponible. ' +
-      (riskResult?._error || 'Datos ausentes.'));
-  }
+  lines.push('\n=== AGENTE DE RIESGO ===');
+  lines.push(riskResult && !riskResult._error ? JSON.stringify(riskResult, null, 2) : 'No disponible.');
 
   lines.push('\n=== INSTRUCCIÓN ===');
-  lines.push('Con los datos anteriores, genera la recomendación en el formato JSON especificado.');
-  lines.push('Recuerda: devuelve SOLO JSON válido, sin texto fuera del JSON.');
+  lines.push('Redactá resumen_usuario y justification_multicriteria para la decisión de arriba.');
+  lines.push('Devolvé SOLO el JSON con esos dos campos.');
 
   return lines.join('\n');
 }
 
-/** Extrae JSON del texto del LLM (intenta parseo directo, luego regex) */
-function extractJSON(text) {
-  // Intento 1: parseo directo
-  try {
-    return JSON.parse(text.trim());
-  } catch (_) {}
-
-  // Intento 2: extraer bloque {...} con regex
-  const match = text.match(/\{[\s\S]*\}/);
-  if (match) {
-    try {
-      return JSON.parse(match[0]);
-    } catch (_) {}
+/** Extrae { resumen_usuario, justification_multicriteria } del texto del LLM. */
+function extractExplanation(text) {
+  let obj = null;
+  try { obj = JSON.parse(text.trim()); } catch (_) {
+    const m = text.match(/\{[\s\S]*\}/);
+    if (m) { try { obj = JSON.parse(m[0]); } catch (_) {} }
   }
-
-  return null;
-}
-
-/** Resultado fallback cuando el LLM no responde correctamente */
-function fallbackResult(profile, riskResult) {
-  const horizon = profile?.horizon ?? 'medium';
+  if (!obj) return null;
+  const r = typeof obj.resumen_usuario === 'string' ? obj.resumen_usuario.trim() : '';
+  const j = typeof obj.justification_multicriteria === 'string' ? obj.justification_multicriteria.trim() : '';
+  if (!r && !j) return null;
   return {
-    final_action:              'hold',
-    confidence_score:          30,
-    horizon,
-    price_target:              null,
-    stop_loss:                 null,
-    portfolio_weight:          0,
-    contradiction_detected:    true,
-    agent_weights:             AGENT_WEIGHTS[horizon] ?? AGENT_WEIGHTS.medium,
-    resumen_usuario:
-      'Por ahora preferimos no recomendarte ninguna acción concreta: no pudimos completar ' +
-      'el análisis con la información disponible, así que lo más prudente es esperar. ' +
-      'Recordá que esto es información para ayudarte a decidir, no una asesoría financiera.',
-    justification_multicriteria:
-      'No se pudo obtener recomendación del orquestador. ' +
-      'Se recomienda mantener (hold) con confianza mínima hasta obtener un análisis válido. ' +
-      'Este es un resultado de seguridad, no asesoría financiera.',
+    resumen_usuario: r || null,
+    justification_multicriteria: j || null,
   };
 }
 
-/** Valida y normaliza el resultado del LLM */
-function normalizeResult(raw, profile, riskResult) {
-  const horizon = profile?.horizon ?? 'medium';
+/** Explicación determinística de respaldo (si el LLM no responde). */
+function templateExplanation(decision, techResult, fundResult, riskResult) {
+  const accion = { buy: 'comprar', sell: 'vender', hold: 'esperar por ahora' }[decision.final_action] ?? 'esperar por ahora';
+  const resumen_usuario =
+    `Según nuestro análisis, lo más razonable sería ${accion}. ` +
+    (decision.contradiction_detected
+      ? 'Las señales no son del todo claras, por eso preferimos ser prudentes. '
+      : '') +
+    'Recordá que esto es información para ayudarte a decidir, no una asesoría financiera.';
 
-  // final_action
-  const validActions = ['buy', 'sell', 'hold'];
-  if (!validActions.includes(raw.final_action)) {
-    raw.final_action = 'hold';
+  const parts = [];
+  if (techResult && !techResult._error) parts.push(`Técnico: ${techResult.justification}`);
+  if (fundResult && !fundResult._error) parts.push(`Fundamental: ${fundResult.justification}`);
+  if (riskResult && !riskResult._error) parts.push(`Riesgo: ${riskResult.justification}`);
+  parts.push(
+    `Decisión calculada en código: ${decision.final_action.toUpperCase()} ` +
+    `(score combinado ${decision._combined}, confianza ${decision.confidence_score}%). ` +
+    decision._reasons.join(' '),
+  );
+  if (decision.price_target != null) {
+    parts.push(`Objetivo ${decision.price_target} / stop ${decision.stop_loss} / peso ${decision.portfolio_weight}%.`);
   }
+  parts.push('Información, no asesoría financiera.');
 
-  // confidence_score
-  raw.confidence_score = clamp(Number(raw.confidence_score) || 30, 0, 100);
-
-  // horizon
-  if (!['short', 'medium', 'long'].includes(raw.horizon)) {
-    raw.horizon = horizon;
-  }
-
-  // price_target / stop_loss — solo números o null
-  raw.price_target = (raw.price_target != null && isFinite(raw.price_target))
-    ? Number(raw.price_target) : null;
-  raw.stop_loss = (raw.stop_loss != null && isFinite(raw.stop_loss))
-    ? Number(raw.stop_loss) : null;
-
-  // portfolio_weight — clamp y guardarraíl duro
-  raw.portfolio_weight = clamp(Number(raw.portfolio_weight) || 0, 0, 100);
-  if (riskResult?.max_weight_pct != null) {
-    raw.portfolio_weight = Math.min(raw.portfolio_weight, riskResult.max_weight_pct);
-  } else {
-    raw.portfolio_weight = Math.min(raw.portfolio_weight, 5);  // fallback máximo 5%
-  }
-
-  // contradiction_detected
-  raw.contradiction_detected = Boolean(raw.contradiction_detected);
-
-  // agent_weights — siempre inyectar desde código (no confiar en el LLM)
-  raw.agent_weights = AGENT_WEIGHTS[horizon] ?? AGENT_WEIGHTS.medium;
-
-  // justification_multicriteria
-  if (typeof raw.justification_multicriteria !== 'string' || !raw.justification_multicriteria) {
-    raw.justification_multicriteria = 'Justificación no disponible.';
-  }
-
-  // resumen_usuario — texto amigable; si falta, derivar uno mínimo legible
-  if (typeof raw.resumen_usuario !== 'string' || !raw.resumen_usuario) {
-    const accion = { buy: 'comprar', sell: 'vender', hold: 'esperar por ahora' }[raw.final_action]
-      ?? 'esperar por ahora';
-    raw.resumen_usuario =
-      `Según nuestro análisis, lo más razonable sería ${accion}. ` +
-      'Recordá que esto es información para ayudarte a decidir, no una asesoría financiera.';
-  }
-
-  return raw;
+  return { resumen_usuario, justification_multicriteria: parts.join(' ') };
 }
 
 // ── Llamada a la API de Claude ────────────────────────────────────────────────
 
-async function callClaude(messages, maxTokens = 2048) {
+async function callClaude(messages, maxTokens = 900, token = null) {
   // Ruta directa si hay API key en window.ENV (dev/testing)
   const directKey =
     (typeof window !== 'undefined') && window.ENV?.ANTHROPIC_API_KEY;
@@ -305,10 +286,13 @@ async function callClaude(messages, maxTokens = 2048) {
     return res.json();
   }
 
-  // Ruta normal: proxy /api/claude
+  // Ruta normal: proxy /api/claude (requiere token de sesión de Clerk)
   const res = await fetch('/api/claude', {
     method:  'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
     body: JSON.stringify({ system: SYSTEM_PROMPT, messages, max_tokens: maxTokens }),
   });
   return res.json();
@@ -323,6 +307,7 @@ async function callClaude(messages, maxTokens = 2048) {
  * @param {object} profile       - { capital, risk_profile, horizon }
  * @param {function} [onStatus]
  * @param {number|null} [currentPrice] - Último precio de cierre de Yahoo Finance
+ * @param {string|null} [token]   - Token de sesión de Clerk para autenticar /api/claude
  * @returns {Promise<OrchestratorResult>}
  */
 export async function runOrchestratorAgent(
@@ -332,55 +317,35 @@ export async function runOrchestratorAgent(
   profile = {},
   onStatus = () => {},
   currentPrice = null,
+  token = null,
 ) {
-  onStatus('Consultando al orquestador...');
+  // 1. DECISIÓN — 100% determinística, sin LLM.
+  onStatus('Calculando recomendación...');
+  const decision = decideAction(techResult, fundResult, riskResult, profile, currentPrice);
 
-  const userContent = buildUserMessage(techResult, fundResult, riskResult, profile, currentPrice);
-  const messages    = [{ role: 'user', content: userContent }];
-
-  let raw = null;
-
-  // ── Intento 1 ───────────────────────────────────────────────────────────────
+  // 2. EXPLICACIÓN — el LLM solo redacta (no puede cambiar la decisión).
+  onStatus('Redactando explicación...');
+  let explanation = null;
   try {
-    const response = await callClaude(messages);
+    const messages = [{
+      role: 'user',
+      content: buildExplanationMessage(decision, techResult, fundResult, riskResult, profile, currentPrice),
+    }];
+    const response = await callClaude(messages, 900, token);
     const text = response?.content?.[0]?.text ?? '';
-    raw = extractJSON(text);
+    explanation = extractExplanation(text);
   } catch (err) {
-    onStatus(`Error en intento 1: ${err.message}`);
+    onStatus(`LLM no disponible para la explicación: ${err.message}`);
   }
 
-  // ── Reintento si el JSON vino malformado ────────────────────────────────────
-  if (raw == null) {
-    onStatus('Reintentando (JSON malformado en intento 1)...');
-    try {
-      const retryMessages = [
-        ...messages,
-        {
-          role: 'assistant',
-          content: 'Mi respuesta anterior no fue JSON válido. Lo corrijo ahora.',
-        },
-        {
-          role: 'user',
-          content: 'Responde SOLO con el JSON válido, sin texto adicional, sin markdown.',
-        },
-      ];
-      const response2 = await callClaude(retryMessages);
-      const text2 = response2?.content?.[0]?.text ?? '';
-      raw = extractJSON(text2);
-    } catch (err) {
-      onStatus(`Error en reintento: ${err.message}`);
-    }
-  }
+  // 3. Respaldo determinístico si el LLM falló o vino incompleto.
+  const fallback = templateExplanation(decision, techResult, fundResult, riskResult);
+  const resumen_usuario = explanation?.resumen_usuario ?? fallback.resumen_usuario;
+  const justification_multicriteria = explanation?.justification_multicriteria ?? fallback.justification_multicriteria;
 
-  // ── Fallback si ambos intentos fallaron ─────────────────────────────────────
-  if (raw == null) {
-    onStatus('Orquestador no disponible — usando resultado de seguridad.');
-    return fallbackResult(profile, riskResult);
-  }
+  onStatus('Recomendación lista.');
 
-  // ── Normalizar y aplicar guardarraíles ──────────────────────────────────────
-  const result = normalizeResult(raw, profile, riskResult);
-
-  onStatus('Recomendación del orquestador lista.');
-  return result;
+  // Salida pública (sin la metadata interna _*).
+  const { _combined, _reasons, _veto_applied, _missing, ...pub } = decision;
+  return { ...pub, resumen_usuario, justification_multicriteria };
 }

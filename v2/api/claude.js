@@ -9,21 +9,23 @@
  */
 
 import { enforceRateLimit } from './_ratelimit.js';
+import { applyCors, requireAuth } from './_auth.js';
 
 const ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages';
 const DEFAULT_MODEL  = 'claude-sonnet-4-6';
 const DEFAULT_TOKENS = 4096;
 
 export default async function handler(req, res) {
-  // CORS preflight
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  applyCors(req, res, 'POST, OPTIONS');
 
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
+
+  // Autenticación: solo usuarios con sesión válida pueden invocar al LLM (costo).
+  const auth = await requireAuth(req, res);
+  if (!auth) return;
 
   // Rate limit: protege contra abuso/costo de la API de Claude.
   // 10 análisis por minuto y por IP (un análisis = 1 llamada al LLM).

@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
-import { useUser, UserButton } from '@clerk/clerk-react';
+import { useUser, UserButton, useAuth } from '@clerk/clerk-react';
 import { kpi } from './lib/analytics.js';
 import { runTechnicalAgent }    from './agents/technical.js';
 import { runFundamentalAgent }  from './agents/fundamental.js';
@@ -9,9 +9,16 @@ import { Component as StockMarketTrackerChart } from './components/ui/stock-mark
 
 // ── Fetchers ──────────────────────────────────────────────────────────────────
 
-async function fetchYahoo(ticker) {
+// Header de autenticación con el token de sesión de Clerk (si está disponible).
+function authHeaders(token) {
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
+async function fetchYahoo(ticker, token) {
   try {
-    const res = await fetch(`/api/yahoo?ticker=${encodeURIComponent(ticker)}`);
+    const res = await fetch(`/api/yahoo?ticker=${encodeURIComponent(ticker)}`, {
+      headers: authHeaders(token),
+    });
     if (!res.ok) throw new Error(`Yahoo ${res.status}`);
     return await res.json();
   } catch (err) {
@@ -19,13 +26,13 @@ async function fetchYahoo(ticker) {
   }
 }
 
-async function fetchAlpha(ticker) {
+async function fetchAlpha(ticker, token) {
   try {
     const key = (typeof window !== 'undefined') && window.ENV?.ALPHA_VANTAGE_API_KEY;
     const url = key
       ? `/api/alpha?ticker=${encodeURIComponent(ticker)}&apikey=${key}`
       : `/api/alpha?ticker=${encodeURIComponent(ticker)}`;
-    const res = await fetch(url);
+    const res = await fetch(url, { headers: authHeaders(token) });
     if (!res.ok) throw new Error(`Alpha ${res.status}`);
     return await res.json();
   } catch (err) {
@@ -143,6 +150,8 @@ function HeaderAuthControls() {
 export default function InvestmentAdvisor() {
   // ── Todos los hooks van ANTES de cualquier return condicional (Rules of Hooks) ──
 
+  const { getToken } = useAuth();
+
   const [isMobile, setIsMobile] = useState(
     typeof window !== 'undefined' ? window.innerWidth < 900 : false,
   );
@@ -207,9 +216,12 @@ export default function InvestmentAdvisor() {
     setStatusMessages({ technical: '', fundamental: '', risk: '', orchestrator: '' });
     setResults({ technical: null, fundamental: null, risk: null, orchestrator: null });
 
+    // Token de sesión de Clerk para autenticar las llamadas a los endpoints.
+    const token = await getToken().catch(() => null);
+
     const [yahooSettled, alphaSettled] = await Promise.allSettled([
-      fetchYahoo(ticker.trim().toUpperCase()),
-      fetchAlpha(ticker.trim().toUpperCase()),
+      fetchYahoo(symbol, token),
+      fetchAlpha(symbol, token),
     ]);
 
     const yahoo = yahooSettled.status === 'fulfilled' ? yahooSettled.value : { _error: 'fetch falló' };
@@ -291,6 +303,7 @@ export default function InvestmentAdvisor() {
         profile,
         m => setAgentStatus('orchestrator', m),
         currentPrice,
+        token,
       );
       setAgentState('orchestrator', 'ready');
     } catch (err) {
@@ -312,7 +325,7 @@ export default function InvestmentAdvisor() {
     setAgentResult('orchestrator', orchResult);
 
     setLoading(false);
-  }, [ticker, profile]);
+  }, [ticker, profile, getToken]);
 
   // Return condicional después de todos los hooks (Rules of Hooks)
   if (isMobile) return <MobileFallback />;

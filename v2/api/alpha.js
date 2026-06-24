@@ -18,6 +18,7 @@
  */
 
 import { enforceRateLimit } from './_ratelimit.js';
+import { applyCors, requireAuth } from './_auth.js';
 
 // ── Cache en memoria ───────────────────────────────────────────────────────────
 
@@ -98,14 +99,19 @@ async function safeFetch(url) {
 // ── Handler principal ──────────────────────────────────────────────────────────
 
 export default async function handler(req, res) {
-  res.setHeader('Access-Control-Allow-Origin', '*');
+  applyCors(req, res, 'GET, OPTIONS');
   res.setHeader('Content-Type', 'application/json');
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
   res.setHeader('Pragma', 'no-cache');
 
+  if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'GET') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
+
+  // Autenticación: solo usuarios con sesión válida pueden consultar fundamentales.
+  const auth = await requireAuth(req, res);
+  if (!auth) return;
 
   const ticker = (req.query.ticker || '').toUpperCase().trim();
   if (!ticker) {
@@ -127,12 +133,18 @@ export default async function handler(req, res) {
 
   const base = `https://www.alphavantage.co/query`;
 
-  // Tres fetches en paralelo para minimizar latencia
-  const [overview, balance, cashflow] = await Promise.all([
-    safeFetch(`${base}?function=OVERVIEW&symbol=${ticker}&apikey=${apiKey}`),
-    safeFetch(`${base}?function=BALANCE_SHEET&symbol=${ticker}&apikey=${apiKey}`),
-    safeFetch(`${base}?function=CASH_FLOW&symbol=${ticker}&apikey=${apiKey}`),
-  ]);
+  // Por defecto SOLO OVERVIEW (1 request) para no agotar el free tier de Alpha Vantage
+  // (25/día y 5/min). Hacer 3 llamadas por análisis lo agota en ~8 análisis y dispara 429.
+  // BALANCE_SHEET y CASH_FLOW (necesarias para D/E y FCF) se activan con ALPHA_DEEP=1,
+  // recomendado solo con un plan pago de Alpha Vantage.
+  const deep = process.env.ALPHA_DEEP === '1';
+  const overview = await safeFetch(`${base}?function=OVERVIEW&symbol=${ticker}&apikey=${apiKey}`);
+  const [balance, cashflow] = deep
+    ? await Promise.all([
+        safeFetch(`${base}?function=BALANCE_SHEET&symbol=${ticker}&apikey=${apiKey}`),
+        safeFetch(`${base}?function=CASH_FLOW&symbol=${ticker}&apikey=${apiKey}`),
+      ])
+    : [null, null];
 
   // OVERVIEW es obligatorio: si falla o rate-limit, devolver error
   if (overview._error) {

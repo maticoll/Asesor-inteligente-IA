@@ -7,6 +7,7 @@
  * Salida:
  * { ticker, currency, closes[], highs[], lows[], volumes[], dates[], currentPrice }
  */
+import { applyCors, requireAuth } from './_auth.js';
 
 const TIMEOUT_MS = 8000;
 
@@ -21,11 +22,17 @@ function filterNulls(closes, ...arrays) {
 }
 
 export default async function handler(req, res) {
-  res.setHeader('Access-Control-Allow-Origin', '*');
+  applyCors(req, res, 'GET, OPTIONS');
   res.setHeader('Content-Type', 'application/json');
   // Deshabilitar cache de Vercel CDN — los datos de mercado deben ser frescos
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
   res.setHeader('Pragma', 'no-cache');
+
+  if (req.method === 'OPTIONS') return res.status(200).end();
+
+  // Autenticación: solo usuarios con sesión válida pueden consultar datos.
+  const auth = await requireAuth(req, res);
+  if (!auth) return;
 
   const ticker = (req.query.ticker || '').toUpperCase().trim();
   if (!ticker) {

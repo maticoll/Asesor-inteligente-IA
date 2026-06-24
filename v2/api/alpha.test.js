@@ -1,6 +1,14 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { calcFCF, calcDebtToEquity } from './alpha.js';
 
+// El handler ahora exige sesión de Clerk y aplica CORS por allowlist (api/_auth.js).
+// Estos tests cubren la lógica de Alpha Vantage, no la auth, así que la bypaseamos:
+// requireAuth devuelve un usuario válido y applyCors es no-op.
+vi.mock('./_auth.js', () => ({
+  requireAuth: async () => ({ userId: 'test-user' }),
+  applyCors: () => {},
+}));
+
 // ── Tests de funciones puras ────────────────────────────────────────────────────
 
 describe('calcFCF', () => {
@@ -89,7 +97,8 @@ const MOCK_CASHFLOW = {
 };
 
 function makeReq(ticker) {
-  return { method: 'GET', query: { ticker } };
+  // headers presente: lo usan applyCors (origin) y el rate-limiter (x-forwarded-for).
+  return { method: 'GET', query: { ticker }, headers: {} };
 }
 
 function makeRes() {
