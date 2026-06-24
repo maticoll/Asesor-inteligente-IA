@@ -16,6 +16,7 @@
     "@clerk/clerk-react": "^5.61.3",
     "@clerk/themes": "^2.4.57",
     "@radix-ui/react-select": "^2.3.0",
+    "@vercel/analytics": "^2.0.1",
     "clsx": "^2.1.1",
     "lucide-react": "^1.17.0",
     "react": "^19.2.6",

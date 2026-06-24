@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { ClerkProvider, SignedIn, SignedOut } from '@clerk/clerk-react';
+import { Analytics } from '@vercel/analytics/react';
 import InvestmentAdvisor from './InvestmentAdvisor.jsx';
 import SignInScreen from './auth/SignInScreen.jsx';
 import AdminPage from './admin/AdminPage.jsx';
@@ -40,25 +41,35 @@ function MissingKeyScreen() {
 }
 
 export default function App() {
-  if (!PUBLISHABLE_KEY) return <MissingKeyScreen />;
+  if (!PUBLISHABLE_KEY) {
+    return (
+      <>
+        <MissingKeyScreen />
+        <Analytics />
+      </>
+    );
+  }
 
   return (
-    <ClerkProvider
-      publishableKey={PUBLISHABLE_KEY}
-      afterSignOutUrl="/"
-      appearance={{
-        variables: {
-          colorPrimary: '#2563eb',
-          borderRadius: '0.5rem',
-        },
-      }}
-    >
-      <SignedIn>
-        <Router />
-      </SignedIn>
-      <SignedOut>
-        <SignInScreen />
-      </SignedOut>
-    </ClerkProvider>
+    <>
+      <ClerkProvider
+        publishableKey={PUBLISHABLE_KEY}
+        afterSignOutUrl="/"
+        appearance={{
+          variables: {
+            colorPrimary: '#2563eb',
+            borderRadius: '0.5rem',
+          },
+        }}
+      >
+        <SignedIn>
+          <Router />
+        </SignedIn>
+        <SignedOut>
+          <SignInScreen />
+        </SignedOut>
+      </ClerkProvider>
+      <Analytics />
+    </>
   );
 }
