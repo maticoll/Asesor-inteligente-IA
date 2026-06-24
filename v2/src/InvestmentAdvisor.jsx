@@ -193,12 +193,14 @@ export default function InvestmentAdvisor() {
 
   const runAnalysis = useCallback(async () => {
     if (!ticker.trim()) return;
+    const symbol = ticker.trim().toUpperCase();
     hasAnalyzedRef.current = true;
     kpi.analysisRun({
-      ticker: ticker.trim().toUpperCase(),
+      ticker: symbol,
       risk_profile: profile.risk_profile,
       horizon: profile.horizon,
     });
+    kpi.tickerConsultado({ ticker: symbol });
     setLoading(true);
     setYahooData(null);
     setAgentStates({ technical: 'fetching', fundamental: 'fetching', risk: 'idle', orchestrator: 'idle' });
@@ -388,7 +390,10 @@ export default function InvestmentAdvisor() {
                   <input
                     type="radio" name="risk_profile" value={v}
                     checked={profile.risk_profile === v}
-                    onChange={() => setProfile(p => ({ ...p, risk_profile: v }))}
+                    onChange={() => {
+                      setProfile(p => ({ ...p, risk_profile: v }));
+                      kpi.profileSelected({ risk_profile: v, horizon: profile.horizon });
+                    }}
                     className="accent-blue-500"
                   />
                   {lbl}
@@ -410,7 +415,10 @@ export default function InvestmentAdvisor() {
                   <input
                     type="radio" name="horizon" value={v}
                     checked={profile.horizon === v}
-                    onChange={() => setProfile(p => ({ ...p, horizon: v }))}
+                    onChange={() => {
+                      setProfile(p => ({ ...p, horizon: v }));
+                      kpi.profileSelected({ risk_profile: profile.risk_profile, horizon: v });
+                    }}
                     className="accent-blue-500"
                   />
                   {lbl}

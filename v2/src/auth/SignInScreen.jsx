@@ -1,7 +1,13 @@
+import { useEffect } from 'react';
 import { SignIn } from '@clerk/clerk-react';
+import { kpi } from '../lib/analytics.js';
 
 // Pantalla de login con la identidad visual de StockWise (tema oscuro).
 export default function SignInScreen() {
+  useEffect(() => {
+    kpi.pageView({ view: 'signin' });
+  }, []);
+
   return (
     <div className="min-h-screen bg-gray-950 text-white font-mono flex flex-col items-center justify-center gap-6 p-6">
       <div className="flex items-center gap-3 text-blue-300 font-bold tracking-wide text-lg">

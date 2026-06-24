@@ -30,4 +30,15 @@ export const kpi = {
 
   /** Falló una llamada de API/agente. props: { source, message }. */
   apiError: (props) => trackEvent('api_error', props),
+
+  // ── Eventos de uso (segmentación) ──────────────────────────────────────────
+
+  /** Vista mostrada (SPA con hash router). props: { view }. */
+  pageView: (props) => trackEvent('page_view', props),
+
+  /** Ticker consultado por el usuario. props: { ticker }. */
+  tickerConsultado: (props) => trackEvent('ticker_consultado', props),
+
+  /** Perfil de inversor elegido. props: { risk_profile, horizon }. */
+  profileSelected: (props) => trackEvent('investor_profile', props),
 };

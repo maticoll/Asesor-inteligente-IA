@@ -55,6 +55,11 @@ function Router() {
     return () => window.removeEventListener('hashchange', onHash);
   }, []);
 
+  // Vista actual (el router es por hash, así que Vercel no la trackea solo).
+  useEffect(() => {
+    kpi.pageView({ view: hash === '#/admin' ? 'admin' : 'advisor' });
+  }, [hash]);
+
   if (hash === '#/admin') return <AdminPage />;
   return <InvestmentAdvisor />;
 }
