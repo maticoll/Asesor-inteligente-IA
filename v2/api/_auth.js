@@ -37,7 +37,10 @@ export function applyCors(req, res, methods = 'GET, POST, OPTIONS') {
  * @returns {Promise<{userId: string} | null>} claims si es válido; si no, ya respondió 401/500 y devuelve null.
  */
 export async function requireAuth(req, res) {
+  const path = req.url || '?';
+
   if (!secretKey) {
+    console.error(`[auth] ${path} — CLERK_SECRET_KEY ausente en el entorno del servidor`);
     res.status(500).json({ error: 'CLERK_SECRET_KEY no configurada en el servidor' });
     return null;
   }
@@ -45,6 +48,10 @@ export async function requireAuth(req, res) {
   const header = req.headers.authorization || '';
   const token = header.startsWith('Bearer ') ? header.slice(7) : null;
   if (!token) {
+    // Distinguir "no mandó header" de "mandó header pero no es Bearer".
+    console.warn(
+      `[auth] ${path} — sin token. authorization header ${header ? 'presente pero sin formato Bearer' : 'ausente'}`,
+    );
     res.status(401).json({ error: 'Autenticación requerida' });
     return null;
   }
@@ -52,7 +59,13 @@ export async function requireAuth(req, res) {
   try {
     const claims = await verifyToken(token, { secretKey });
     return { userId: claims.sub };
-  } catch {
+  } catch (err) {
+    // Causa real al log de Vercel (no al cliente). Típicamente:
+    //  - "token-invalid-signature" / clave que no corresponde a la instancia (mismatch pk/sk)
+    //  - "token-expired" / clock skew
+    console.error(
+      `[auth] ${path} — verifyToken falló: ${err?.reason || err?.message || err}`,
+    );
     res.status(401).json({ error: 'Token inválido o expirado' });
     return null;
   }
