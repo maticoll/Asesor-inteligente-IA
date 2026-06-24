@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect } from 'react';
+import { useUser, UserButton } from '@clerk/clerk-react';
 import { runTechnicalAgent }    from './agents/technical.js';
 import { runFundamentalAgent }  from './agents/fundamental.js';
 import { runRiskAgent }         from './agents/risk.js';
@@ -110,6 +111,28 @@ function MobileFallback() {
           Por favor, abrila desde una computadora o ampliá la ventana del navegador.
         </p>
       </div>
+    </div>
+  );
+}
+
+// ── Controles de sesión del header (botón usuario + acceso admin) ──────────────
+
+function HeaderAuthControls() {
+  const { user } = useUser();
+  const isAdmin = user?.publicMetadata?.role === 'admin';
+
+  return (
+    <div className="flex items-center gap-4">
+      <span className="text-xs text-gray-600">Información, no asesoría financiera</span>
+      {isAdmin && (
+        <button
+          onClick={() => { window.location.hash = '#/admin'; }}
+          className="text-xs text-blue-300 hover:text-blue-200 border border-gray-800 rounded px-2 py-1"
+        >
+          Admin
+        </button>
+      )}
+      <UserButton afterSignOutUrl="/" />
     </div>
   );
 }
@@ -288,9 +311,7 @@ export default function InvestmentAdvisor() {
           <img src="/stockwise_icon_only.png" alt="StockWise" className="h-8 w-8 object-contain" />
           StockWise
         </span>
-        <span className="text-xs text-gray-600">
-          Información, no asesoría financiera
-        </span>
+        <HeaderAuthControls />
       </header>
 
       {/* BODY */}

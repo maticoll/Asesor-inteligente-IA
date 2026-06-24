@@ -4,3 +4,9 @@ dist/
 .env.*.local
 *.local
 .DS_Store
+
+# Archivos de entorno locales (defensivo)
+.env
+.env.local
+v2/.env
+v2/.env.local

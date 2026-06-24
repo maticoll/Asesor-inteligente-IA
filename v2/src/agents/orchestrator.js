@@ -92,7 +92,7 @@ El JSON debe tener exactamente estos campos:
     "risk": número
   },
   "resumen_usuario": "texto en español dirigido a una persona SIN conocimientos técnicos de finanzas",
-  "justification_multicriteria": "texto en español explicando el razonamiento multi-criterio, las señales de cada agente, el peso aplicado según el horizonte, y el disclaimer de que es información y no asesoría financiera"
+  "justification_multicriteria": "texto en español TÉCNICO y detallado (ver instrucciones abajo)"
 }
 
 ───────────────────────────────────────────────
@@ -113,8 +113,22 @@ Este es el texto que la persona lee primero. Debe ser claro y cercano. Reglas:
 - Cerrá SIEMPRE con una frase breve recordando que esto es información para ayudarte
   a decidir, no una asesoría financiera ni una orden de compra/venta.
 
-El campo "justification_multicriteria" mantené la explicación técnica y detallada de siempre
-(es para el registro y para usuarios avanzados, no se le muestra de forma destacada al usuario).`;
+───────────────────────────────────────────────
+CÓMO ESCRIBIR "justification_multicriteria" (DATOS CRUDOS — TÉCNICO)
+───────────────────────────────────────────────
+Este texto NO se le muestra de forma destacada al usuario: aparece en la sección "Datos crudos"
+para usuarios avanzados y para auditoría. Por eso debe ser lo MÁS técnico y detallado posible,
+SIN simplificar. Incluí explícitamente:
+- La señal, el score y la confianza de cada agente (técnico, fundamental, riesgo), con sus
+  valores concretos (ej: RSI, MACD, SMA50/200, Golden/Death Cross, P/E, ROE, PEG, beta,
+  volatilidad anualizada, VaR 95%, max_weight_pct).
+- El régimen de mercado detectado y cómo influyó.
+- Los pesos aplicados por horizonte (agent_weights) y cómo se combinaron las señales.
+- Si se activó el veto fundamental, la confirmación mínima (≥2 familias), o si hubo
+  contradicción, explicándolo con los números que lo respaldan.
+- El razonamiento de price_target, stop_loss y portfolio_weight respecto al precio actual.
+- Cerrá con el disclaimer de que es información y no asesoría financiera.
+Es la explicación completa de ingeniería; no omitas cálculos ni cifras.`;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 

@@ -12,6 +12,8 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@clerk/backend": "^3.8.3",
+    "@clerk/clerk-react": "^5.61.3",
     "@radix-ui/react-select": "^2.3.0",
     "clsx": "^2.1.1",
     "lucide-react": "^1.17.0",
