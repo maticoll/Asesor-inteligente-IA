@@ -17,6 +17,8 @@
  * Ref: INVESTIGACION_CRITERIOS_INVERSION.md — Parte B
  */
 
+import { enforceRateLimit } from './_ratelimit.js';
+
 // ── Cache en memoria ───────────────────────────────────────────────────────────
 
 const CACHE = new Map();
@@ -110,9 +112,13 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'Falta parámetro: ticker' });
   }
 
-  // Cache hit → devolver sin gastar API calls
+  // Cache hit → devolver sin gastar API calls (no cuenta para el rate limit)
   const cached = cacheGet(ticker);
   if (cached) return res.status(200).json(cached);
+
+  // Rate limit: protege la cuota free de Alpha Vantage (25/día) contra ráfagas.
+  // 8 fetches reales por minuto y por IP.
+  if (!enforceRateLimit(req, res, { bucket: 'alpha', limit: 8, windowMs: 60_000 })) return;
 
   const apiKey = process.env.ALPHA_VANTAGE_API_KEY;
   if (!apiKey) {

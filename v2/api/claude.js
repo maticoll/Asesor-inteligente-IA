@@ -8,6 +8,8 @@
  *   → devuelve la respuesta tal cual
  */
 
+import { enforceRateLimit } from './_ratelimit.js';
+
 const ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages';
 const DEFAULT_MODEL  = 'claude-sonnet-4-6';
 const DEFAULT_TOKENS = 4096;
@@ -22,6 +24,10 @@ export default async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
+
+  // Rate limit: protege contra abuso/costo de la API de Claude.
+  // 10 análisis por minuto y por IP (un análisis = 1 llamada al LLM).
+  if (!enforceRateLimit(req, res, { bucket: 'claude', limit: 10, windowMs: 60_000 })) return;
 
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
