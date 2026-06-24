@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react';
 import { ClerkProvider, SignedIn, SignedOut } from '@clerk/clerk-react';
-import { dark } from '@clerk/themes';
 import InvestmentAdvisor from './InvestmentAdvisor.jsx';
 import SignInScreen from './auth/SignInScreen.jsx';
 import AdminPage from './admin/AdminPage.jsx';
@@ -48,12 +47,8 @@ export default function App() {
       publishableKey={PUBLISHABLE_KEY}
       afterSignOutUrl="/"
       appearance={{
-        baseTheme: dark,
         variables: {
-          colorPrimary: '#60a5fa',
-          colorBackground: '#111827',
-          colorText: '#f9fafb',
-          colorTextSecondary: '#9ca3af',
+          colorPrimary: '#2563eb',
           borderRadius: '0.5rem',
         },
       }}

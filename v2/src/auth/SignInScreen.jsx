@@ -15,8 +15,8 @@ export default function SignInScreen() {
       <SignIn
         appearance={{
           elements: {
-            card: 'shadow-xl border border-gray-800',
-            headerTitle: 'text-blue-300',
+            card: 'shadow-xl border border-gray-200',
+            headerTitle: 'text-blue-700',
           },
         }}
       />
