@@ -14,15 +14,6 @@ export default function SignInScreen() {
 
       <SignIn
         appearance={{
-          variables: {
-            colorBackground: '#111827',
-            colorInputBackground: '#1f2937',
-            colorText: '#f9fafb',
-            colorTextSecondary: '#9ca3af',
-            colorPrimary: '#60a5fa',
-            colorInputText: '#f9fafb',
-            borderRadius: '0.5rem',
-          },
           elements: {
             card: 'shadow-xl border border-gray-800',
             headerTitle: 'text-blue-300',
